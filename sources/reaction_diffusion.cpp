@@ -91,10 +91,15 @@ int main()
     {
         auto seed = std::random_device{}();
         std::mt19937_64 rng(seed);
-        std::uniform_real_distribution uniDist{ 0.01, 0.99 };
+        std::uniform_real_distribution uniDist{ 0.0, 0.99 };
         for (int i = H/2-20; i < H/2+20; ++i) {
             for (int j = W/2-10; j < W/2+10; ++j) {
+#if 0
+                v.at<float>(i, j) = 1.0;
+#else
                 v.at<float>(i, j) = (float)uniDist(rng);
+                u.at<float>(i, j) = (float)uniDist(rng);
+#endif
             }
         }
     }
