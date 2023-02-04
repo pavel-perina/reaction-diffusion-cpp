@@ -7,7 +7,8 @@
 #include <utility>
 #include <sstream>
 
-constexpr int N = 512;
+constexpr int W = 1280;
+constexpr int H = 720;
 
 
 class Update
@@ -24,16 +25,16 @@ public:
     void operator() (const tbb::blocked_range<int> &range) const 
     {
         for (int i = range.begin(); i < range.end(); ++i) {
-            const auto iUp   = (i > 0) ? i - 1 : N - 1;
-            const auto iDown = (i + 1) % N;
-            for (int j = 0; j < N; j++) {
+            const auto iUp   = (i > 0) ? i - 1 : H - 1;
+            const auto iDown = (i + 1) % H;
+            for (int j = 0; j < W; j++) {
                 // TODO: replace with [0.05 0.2 0.05   0.2 -1 0.2   0.05 0.2 0.05 kernel
                 float lap_u, lap_v; 
                 if (j == 0) { // unlikely
-                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, N - 1) + u.at<float>(i, j + 1) - 4.0 * u.at<float>(i, j);
-                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, N - 1) + v.at<float>(i, j + 1) - 4.0 * v.at<float>(i, j);
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, W - 1) + u.at<float>(i, j + 1) - 4.0 * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, W - 1) + v.at<float>(i, j + 1) - 4.0 * v.at<float>(i, j);
                 }
-                else if (j == N - 1) { // unlikely
+                else if (j == W - 1) { // unlikely
                     lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i,     0) - 4.0 * u.at<float>(i, j);
                     lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i,     0) - 4.0 * v.at<float>(i, j);
 
@@ -45,8 +46,8 @@ public:
 
                 const float _u = u.at<float>(i, j);
                 const float _v = v.at<float>(i, j);
-                const float _uNext = _u + dt * (Du * lap_u - _u * _v * _v + f * (1.0 - _u));
-                const float _vNext = _v + dt * (Dv * lap_v + _u * _v * _v - (f + k) * _v);
+                const float _uNext = _u + (Du * lap_u - _u * _v * _v + f * (1.0 - _u));
+                const float _vNext = _v + (Dv * lap_v + _u * _v * _v - (f + k) * _v);
                 uNext.at<float>(i, j) = _uNext;
                 vNext.at<float>(i, j) = _vNext;
 
@@ -75,10 +76,10 @@ std::pair<double, double> getGainOffset(double minVal, double maxVal)
 
 int main() 
 {
-    cv::Mat u     = cv::Mat::ones(N, N, CV_32FC1);
-    cv::Mat v     = cv::Mat::zeros(N, N, CV_32FC1);
-    cv::Mat uNext = cv::Mat::ones(N, N, CV_32FC1);
-    cv::Mat vNext = cv::Mat::zeros(N, N, CV_32FC1);
+    cv::Mat u     = cv::Mat::ones(H, W, CV_32FC1);
+    cv::Mat v     = cv::Mat::zeros(H, W, CV_32FC1);
+    cv::Mat uNext = cv::Mat::ones(H, W, CV_32FC1);
+    cv::Mat vNext = cv::Mat::zeros(H, W, CV_32FC1);
 
     std::cout << "Initializing arrays\n";
     {
@@ -86,8 +87,8 @@ int main()
         std::mt19937_64 rng(seed);
 
 #if 1
-        for (int i = N/2-20; i < N/2+20; ++i) {
-            for (int j = N/2-10; j < N/2+10; ++j) {
+        for (int i = H/2-20; i < H/2+20; ++i) {
+            for (int j = W/2-10; j < W/2+10; ++j) {
                 v.at<float>(i, j) = 1.0;
             }
         }
@@ -101,13 +102,29 @@ int main()
         }
 #endif
     }
-   
-    for (int i = 0; i < 256000; i++) {
-        tbb::parallel_for(tbb::blocked_range<int>(0, N), Update(u, v, uNext, vNext));
+    
+    const int maxIter = 512000;
+    std::vector<int> framesToSave;
+    {
+        const double nFramesToSave = 60.0 * 8.0 - 1.0; // 60fps, 8s
+        framesToSave.reserve(nFramesToSave);
+        framesToSave.emplace_back(0);
+        double gamma = 3.0;
+        for (int i = 1; i < nFramesToSave; ++i) {
+            double timeLinePos = (double)i / nFramesToSave;
+            int frame = pow(timeLinePos, gamma) * maxIter;
+            if (framesToSave.back() != frame)
+                framesToSave.emplace_back(frame);            
+        }
+    }
+
+    int j = 0;
+    for (int i = 0; i < maxIter; i++) {
+        tbb::parallel_for(tbb::blocked_range<int>(0, H), Update(u, v, uNext, vNext));
         std::swap(u, uNext);
         std::swap(v, vNext);
 
-        if (i % 512 == 0) {
+        if (i == framesToSave[j]) {
             double minU, maxU, minV, maxV;
             cv::minMaxIdx(u, &minU, &maxU);
             const auto [alpha, beta] = getGainOffset(minU, maxU);
@@ -116,8 +133,9 @@ int main()
 
             std::ostringstream oss;
             std::cout << "Loop " << i << std::endl;
-            oss << "frame_" << i << ".png";
+            oss << "frame_" << j << ".png";
             cv::imwrite(oss.str(), tmp);
+            j++;
         }
     }
 }
