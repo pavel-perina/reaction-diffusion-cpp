@@ -1,0 +1,9 @@
+html/
+build/
+build-linux/
+x64/
+out/
+enc_temp_folder/
+.vs/
+.vscode/
+*.bak
