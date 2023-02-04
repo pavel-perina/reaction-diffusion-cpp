@@ -1,5 +1,10 @@
 // https://www.karlsims.com/rd.html
 // https://www.youtube.com/watch?v=Iigfe7ZQfyY
+// video:
+//  C:\apps\ffmpeg.exe -r 60  -i frame_%d.png -c:v libx264 -pix_fmt yuv420p out2.mp4
+//  C:\apps\ffmpeg.exe -r 60  -i frame_%d.png -pix_fmt yuv420p out2.yuv
+//  C:\apps\SvtAv1EncApp.exe -i .\out2.yuv -w 1280 -h 720 --fps-num 60000 --fps-denom 1001 -b out2.ivf
+//  :\apps\mkvtoolnix\mkvmerge.exe .\out2.ivf -o reaction-diffusion.webm
 #include <iostream>
 #include <tbb/tbb.h>
 #include <opencv2/opencv.hpp>
@@ -31,22 +36,22 @@ public:
                 // TODO: replace with [0.05 0.2 0.05   0.2 -1 0.2   0.05 0.2 0.05 kernel
                 float lap_u, lap_v; 
                 if (j == 0) { // unlikely
-                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, W - 1) + u.at<float>(i, j + 1) - 4.0 * u.at<float>(i, j);
-                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, W - 1) + v.at<float>(i, j + 1) - 4.0 * v.at<float>(i, j);
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, W - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, W - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
                 }
                 else if (j == W - 1) { // unlikely
-                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i,     0) - 4.0 * u.at<float>(i, j);
-                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i,     0) - 4.0 * v.at<float>(i, j);
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i,     0) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i,     0) - 4.0f * v.at<float>(i, j);
 
                 }
                 else { // likely
-                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, j + 1) - 4.0 * u.at<float>(i, j);
-                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, j + 1) - 4.0 * v.at<float>(i, j);
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
                 }
 
                 const float _u = u.at<float>(i, j);
                 const float _v = v.at<float>(i, j);
-                const float _uNext = _u + (Du * lap_u - _u * _v * _v + f * (1.0 - _u));
+                const float _uNext = _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
                 const float _vNext = _v + (Dv * lap_v + _u * _v * _v - (f + k) * _v);
                 uNext.at<float>(i, j) = _uNext;
                 vNext.at<float>(i, j) = _vNext;
@@ -81,40 +86,33 @@ int main()
     cv::Mat uNext = cv::Mat::ones(H, W, CV_32FC1);
     cv::Mat vNext = cv::Mat::zeros(H, W, CV_32FC1);
 
+    // Initialize image with rectange (random numbers do not work)
     std::cout << "Initializing arrays\n";
     {
         auto seed = std::random_device{}();
         std::mt19937_64 rng(seed);
-
-#if 1
+        std::uniform_real_distribution uniDist{ 0.01, 0.99 };
         for (int i = H/2-20; i < H/2+20; ++i) {
             for (int j = W/2-10; j < W/2+10; ++j) {
-                v.at<float>(i, j) = 1.0;
+                v.at<float>(i, j) = (float)uniDist(rng);
             }
         }
-#else
-        std::uniform_real_distribution uniDist{ 0.01, 0.99 };
-        for (int i = 0; i < N; ++i) {
-            for (int j = 0; j < N ; ++j) {
-                u.at<float>(i, j) = uniDist(rng);
-                v.at<float>(i, j) = uniDist(rng);
-            }
-        }
-#endif
     }
     
+    // This is there only to slow down video at start and accelerate it in the end
     const int maxIter = 512000;
     std::vector<int> framesToSave;
     {
-        const double nFramesToSave = 60.0 * 8.0 - 1.0; // 60fps, 8s
+        const int nFramesToSave = 60 * 8 - 1; // 60fps, 8s
         framesToSave.reserve(nFramesToSave);
         framesToSave.emplace_back(0);
         double gamma = 3.0;
         for (int i = 1; i < nFramesToSave; ++i) {
             double timeLinePos = (double)i / nFramesToSave;
-            int frame = pow(timeLinePos, gamma) * maxIter;
-            if (framesToSave.back() != frame)
-                framesToSave.emplace_back(frame);            
+            int frame = (int)(pow(timeLinePos, gamma) * maxIter);
+            if (framesToSave.back() != frame) {
+                framesToSave.emplace_back(frame);
+            }
         }
     }
 
@@ -124,8 +122,9 @@ int main()
         std::swap(u, uNext);
         std::swap(v, vNext);
 
+        // save video frame
         if (i == framesToSave[j]) {
-            double minU, maxU, minV, maxV;
+            double minU, maxU;
             cv::minMaxIdx(u, &minU, &maxU);
             const auto [alpha, beta] = getGainOffset(minU, maxU);
             cv::Mat tmp;
