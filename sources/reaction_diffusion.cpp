@@ -5,34 +5,43 @@
 #include <opencv2/opencv.hpp>
 #include <random>
 #include <utility>
+#include <sstream>
 
 constexpr int N = 512;
-constexpr float dx = 1.0f / N;
-constexpr float dt = /*0.1f * dx * dx*/ 0.2;
-
 
 
 class Update
 {
 public:
-    Update(const cv::Mat& _u, const cv::Mat& _v, 
-           cv::Mat& _uNext, cv::Mat& _vNext, 
-           float _dx) 
+    Update(const cv::Mat& _u, const cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext) 
         : u(_u)
         , v(_v)
         , uNext(_uNext)
         , vNext(_vNext)
-        , dx(_dx)
     {
     }
 
     void operator() (const tbb::blocked_range<int> &range) const 
     {
         for (int i = range.begin(); i < range.end(); ++i) {
-            for (int j = 1; j < N-1; j++) {
+            const auto iUp   = (i > 0) ? i - 1 : N - 1;
+            const auto iDown = (i + 1) % N;
+            for (int j = 0; j < N; j++) {
                 // TODO: replace with [0.05 0.2 0.05   0.2 -1 0.2   0.05 0.2 0.05 kernel
-                const float lap_u = u.at<float>(i-1, j) + u.at<float>(i+1, j) + u.at<float>(i, j-1) + u.at<float>(i, j+1) - 4.0*u.at<float>(i, j);
-                const float lap_v = v.at<float>(i-1, j) + v.at<float>(i+1, j) + v.at<float>(i, j-1) + v.at<float>(i, j+1) - 4.0*v.at<float>(i, j);
+                float lap_u, lap_v; 
+                if (j == 0) { // unlikely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, N - 1) + u.at<float>(i, j + 1) - 4.0 * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, N - 1) + v.at<float>(i, j + 1) - 4.0 * v.at<float>(i, j);
+                }
+                else if (j == N - 1) { // unlikely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i,     0) - 4.0 * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i,     0) - 4.0 * v.at<float>(i, j);
+
+                }
+                else { // likely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, j + 1) - 4.0 * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, j + 1) - 4.0 * v.at<float>(i, j);
+                }
 
                 const float _u = u.at<float>(i, j);
                 const float _v = v.at<float>(i, j);
@@ -46,14 +55,13 @@ public:
     }
 
 private:
-    static constexpr float Du = 1.0f;
-    static constexpr float Dv = 0.5f;
+    static constexpr float Du = 0.21f;
+    static constexpr float Dv = 0.105f;
     static constexpr float f = 0.055f; // feed
     static constexpr float k = 0.062f; // kill
 
     const cv::Mat &u, &v;
     cv::Mat &uNext, &vNext;
-    float dx;
 };
 
 
@@ -94,33 +102,22 @@ int main()
 #endif
     }
    
-    for (int i = 0; i < 30000; i++) {
-        std::cout << "Loop " << i << std::endl;
-        double minU, maxU, minV, maxV;
-        cv::minMaxIdx(u, &minU, &maxU);
-        cv::minMaxIdx(v, &minV, &maxV);
-        //std::cout << "uMin= " << minU << ", uMax=" << maxU << std::endl;
-        //std::cout << "vMin= " << minV << ", vMax=" << maxV << std::endl;
-
-
-        tbb::parallel_for(tbb::blocked_range<int>(1, N-1), Update(u, v, uNext, vNext, dx));
-        /*u = uNext.clone();
-        v = vNext.clone();*/
+    for (int i = 0; i < 256000; i++) {
+        tbb::parallel_for(tbb::blocked_range<int>(0, N), Update(u, v, uNext, vNext));
         std::swap(u, uNext);
         std::swap(v, vNext);
 
-    }
+        if (i % 512 == 0) {
+            double minU, maxU, minV, maxV;
+            cv::minMaxIdx(u, &minU, &maxU);
+            const auto [alpha, beta] = getGainOffset(minU, maxU);
+            cv::Mat tmp;
+            u.convertTo(tmp, CV_8UC1, alpha * 255.0, beta * 255.0);
 
-    {
-        //cv::Mat crop = u.su
-        double minU, maxU, minV, maxV;
-        cv::minMaxIdx(u, &minU, &maxU);
-        const auto [alpha, beta] = getGainOffset(minU, maxU);
-        cv::Mat tmp;
-        u.convertTo(tmp, CV_8UC1, alpha * 255.0, beta * 255.0);
-
-
-        //cv::imwrite("result.png", 255 * (u - u.min()) / (u.max() - u.min()));
-        cv::imwrite("result_u.webp", tmp);
+            std::ostringstream oss;
+            std::cout << "Loop " << i << std::endl;
+            oss << "frame_" << i << ".png";
+            cv::imwrite(oss.str(), tmp);
+        }
     }
 }
