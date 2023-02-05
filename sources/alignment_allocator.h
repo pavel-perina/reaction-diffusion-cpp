@@ -37,7 +37,7 @@ public:
     }
 
     template <typename T2>
-    inline AlignmentAllocator (const AlignmentAllocator<T2, N> &) throw ()
+    explicit inline AlignmentAllocator (const AlignmentAllocator<T2, N> &) throw ()
     {
     }
 
@@ -61,7 +61,7 @@ public:
         // number of bytes to allocate, alignment in bytes
         return (pointer)_aligned_malloc(n * sizeof(value_type), N);
 #else
-        std::aligned_alloc(N, n*sizeof(value_type));
+        return std::aligned_alloc(N, n*sizeof(value_type));
 #endif
     }
 

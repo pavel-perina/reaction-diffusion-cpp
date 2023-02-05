@@ -25,8 +25,8 @@
 
 #include <immintrin.h>
 
-constexpr int W = 640;
-constexpr int H = 480;
+constexpr int W = 512;
+constexpr int H = 512;
 
 class IUpdater 
 {
@@ -102,7 +102,7 @@ public:
 
     void iterate() override
     {
-        tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](tbb::blocked_range<int>& range) {
+        tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](const tbb::blocked_range<int>& range) {
             this->operator()(range);
         });
         std::swap(u, uNext);
@@ -169,7 +169,7 @@ public:
     {
         tbb::parallel_for(
             tbb::blocked_range<int>(0, H), 
-            [&](tbb::blocked_range<int>& range) {
+            [&](const tbb::blocked_range<int>& range) {
                 this->operator()(range);
             });
         std::swap(u, uNext);
@@ -255,17 +255,15 @@ public:
             for (int i = range.begin(); i < range.end(); ++i) {
                 const auto iUp   = (i > 0) ? i - 1 : H - 1;
                 const auto iDown = (i + 1) % H;
-                for (int j = jMin; j < jMax; ++j) {
+                for (int j = jMin; j < jMax; j += 8) {
 
                     __m256 uCurrent = _mm256_load_ps(&u.at<float>(i, j));
-                    __m256 vCurrent = _mm256_load_ps(&v.at<float>(i, j));
 
                     __m256 uUp      = _mm256_load_ps (&u.at<float>(iUp, j));
                     __m256 uDown    = _mm256_load_ps (&u.at<float>(iDown, j));
                     __m256 uLeft    = _mm256_loadu_ps(&u.at<float>(i, j - 1));
                     __m256 uRight   = _mm256_loadu_ps(&u.at<float>(i, j + 1));
  
-
                     __m256 lap_u = _mm256_add_ps(uUp, uDown);
                     lap_u = _mm256_add_ps(lap_u, uLeft);
                     lap_u = _mm256_add_ps(lap_u, uRight);
@@ -276,13 +274,14 @@ public:
                     __m256 fTerm = _mm256_sub_ps(one, uCurrent);
                     fTerm = _mm256_mul_ps(f_, fTerm);
 
+                    __m256 vCurrent = _mm256_load_ps(&v.at<float>(i, j));
                     __m256 uvv = _mm256_mul_ps(uCurrent, _mm256_mul_ps(vCurrent, vCurrent));
 
                     //  _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
                     __m256 uNext1 = _mm256_sub_ps(fTerm, uvv);
                     __m256 uNext2 = _mm256_add_ps(uCurrent, Du_lap_u);
                     __m256 uNext_ = _mm256_add_ps(uNext1, uNext2);
-                    _mm256_storeu_ps(&uNext.at<float>(i, j), uNext_);
+                    _mm256_store_ps(&uNext.at<float>(i, j), uNext_);
 
                     __m256 vUp    = _mm256_load_ps (&v.at<float>(iUp, j));
                     __m256 vDown  = _mm256_load_ps (&v.at<float>(iDown, j));
@@ -299,10 +298,11 @@ public:
                     __m256 vNext1 = _mm256_add_ps(kTerm, uvv);
                     __m256 vNext2 = _mm256_add_ps(vCurrent, Dv_lap_v);
                     __m256 vNext_ = _mm256_add_ps(vNext1, vNext2);
-                    _mm256_storeu_ps(&vNext.at<float>(i, j), vNext_);
+                    _mm256_store_ps(&vNext.at<float>(i, j), vNext_);
                 }
             }
-        });
+        } // , tbb::*partitioner()
+        );
     }
 
     void iterate() override
@@ -339,6 +339,12 @@ void saveImage(const std::string& filename, const cv::Mat& m)
 
 int main()
 {
+    int numThreads = oneapi::tbb::info::default_concurrency();
+    fmt::print("Machine has {} threads.\n", numThreads);
+    numThreads = 2;
+    fmt::print("Limiting to {} threads.\n", numThreads);
+    tbb::global_control tbbGlob(tbb::global_control::max_allowed_parallelism, numThreads);
+
     cv::Mat u, v, uNext, vNext;
     // would be nice to use aligned alocator for unique_ptr<float[]>
     std::array<std::vector<float, AlignmentAllocator<float, 4096>>, 4> memoryBlocks;
@@ -353,7 +359,7 @@ int main()
         v     = cv::Mat(H, W, CV_32FC1, memoryBlocks[1].data(), stride);
         uNext = cv::Mat(H, W, CV_32FC1, memoryBlocks[2].data(), stride);
         vNext = cv::Mat(H, W, CV_32FC1, memoryBlocks[3].data(), stride);
-        u = cv::Scalar(1.0f);
+        u.setTo(1.0f);
     }
 
     // Initialize image with rectange (random numbers do not work)
@@ -406,28 +412,39 @@ int main()
         }
     }
 #else
-    int testIter = 10000;
+    int testIter = 2000;
     // TODO: warm up and repeat, first test has different data
     // TODO: add functions for logical parts
     using Clock = std::chrono::system_clock;
     using DurationMs = std::chrono::duration<double, std::milli>;
 
-    Updater3 updater1(u, v, uNext, vNext);
+    Updater1 updater1(u, v, uNext, vNext);
     Updater2 updater2(u, v, uNext, vNext);
+    Updater3 updater3(u, v, uNext, vNext);
     for (int j = 0; j < 5; ++j) {
         Clock::time_point stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
             updater1.iterate();
         }
         DurationMs durationMs(Clock::now() - stopWatchStart);
-        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Version1");
-
+        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater1: trivial");
+        // 
         stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
             updater2.iterate();
         }
         durationMs = Clock::now() - stopWatchStart;
-        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Version2");
+        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater2: no mat.at<float>(x,y)");
+
+        // 
+        stopWatchStart = Clock::now();
+        for (int i = 0; i < testIter; i++) {
+            updater3.iterate();
+        }
+        durationMs = Clock::now() - stopWatchStart;
+        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater3: AVX");
+
+
     }
 #endif
 }
