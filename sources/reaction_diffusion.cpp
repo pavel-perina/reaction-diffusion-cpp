@@ -47,23 +47,32 @@ public:
     void operator() (const tbb::blocked_range<int> &range) const 
     {
         for (int i = range.begin(); i < range.end(); ++i) {
-            const auto iUp   = (i > 0) ? i - 1 : H - 1;
-            const auto iDown = (i + 1) % H;
+            const float* pU = u.ptr<float>(i);
+            const float* pV = v.ptr<float>(i);
+            const size_t rowSize = u.step / sizeof(float);
+
+            const ptrdiff_t up   = (i > 0) 
+                ? -rowSize
+                : (H - 1)*rowSize;
+            const ptrdiff_t down = (i + 1) < H
+                ? rowSize
+                : -(H - 1) * rowSize;
+
             for (int j = 0; j < W; j++) {
                 // TODO: replace with [0.05 0.2 0.05   0.2 -1 0.2   0.05 0.2 0.05 kernel
                 float lap_u, lap_v; 
                 if (j == 0) { // unlikely
-                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, W - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
-                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, W - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
+                    lap_u = pU[up] + pU[down] + u.at<float>(i, W - 1) + pU[+1] - 4.0f * pU[0];
+                    lap_v = pV[up] + pV[down] + v.at<float>(i, W - 1) + pV[+1] - 4.0f * pV[0];
                 }
                 else if (j == W - 1) { // unlikely
-                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i,     0) - 4.0f * u.at<float>(i, j);
-                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i,     0) - 4.0f * v.at<float>(i, j);
+                    lap_u = pU[up] + pU[down] + pU[-1] + u.at<float>(i, 0) - 4.0f * pU[0];
+                    lap_v = pV[up] + pV[down] + pV[-1] + v.at<float>(i, 0) - 4.0f * pV[0];
 
                 }
                 else { // likely
-                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
-                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
+                    lap_u = pU[down] + pU[up] + pU[-1] + pU[+1] - 4.0f * pU[0];
+                    lap_v = pV[down] + pV[up] + pV[-1] + pV[+1] - 4.0f * pV[0];
                 }
 
                 const float _u = u.at<float>(i, j);
@@ -72,6 +81,8 @@ public:
                 const float _vNext = _v + (Dv * lap_v + _u * _v * _v - (f + k) * _v);
                 uNext.at<float>(i, j) = _uNext;
                 vNext.at<float>(i, j) = _vNext;
+                pU++;
+                pV++;
 
             }
         }
