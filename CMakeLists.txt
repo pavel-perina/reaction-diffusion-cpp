@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 project(reaction_diffusion)
 
+include(FetchContent)
 
 ################################################################
 # NOTE: TO SET CLANG COMPILER (OPTIONAL)
@@ -31,6 +32,15 @@ set_target_properties( ${OpenCV_LIBS} PROPERTIES MAP_IMPORTED_CONFIG_RELWITHDEBI
 
 find_package(Threads REQUIRED)
 
+
+################################################################
+# FMT (c++20 adds majority off this as std::format)
+FetchContent_Declare(fmt
+    GIT_REPOSITORY https://github.com/fmtlib/fmt
+    GIT_TAG 9.1.0
+)
+FetchContent_MakeAvailable(fmt)
+
 ################################################################
 ### SET C++17 STANDARD
 set(CMAKE_CXX_STANDARD 17)
@@ -59,6 +69,6 @@ add_executable(reaction_diffusion sources/reaction_diffusion.cpp)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 
-target_link_libraries(reaction_diffusion PRIVATE Threads::Threads TBB::tbb  ${OpenCV_LIBS})
+target_link_libraries(reaction_diffusion PRIVATE Threads::Threads TBB::tbb fmt::fmt  ${OpenCV_LIBS})
 
 

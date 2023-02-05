@@ -5,17 +5,26 @@
 //  C:\apps\ffmpeg.exe -r 60  -i frame_%d.png -pix_fmt yuv420p out2.yuv
 //  C:\apps\SvtAv1EncApp.exe -i .\out2.yuv -w 1280 -h 720 --fps-num 60000 --fps-denom 1001 -b out2.ivf
 //  :\apps\mkvtoolnix\mkvmerge.exe .\out2.ivf -o reaction-diffusion.webm
+#include <array>
+#include <chrono>
 #include <iostream>
-#include <tbb/tbb.h>
-#include <opencv2/opencv.hpp>
 #include <random>
+#include <string>
+#include <string_view>
 #include <utility>
-#include <sstream>
+
+#include <tbb/tbb.h>
+
+#include <fmt/core.h>
+#include <fmt/chrono.h>
+
+#include <opencv2/opencv.hpp>
+
 
 constexpr int W = 640;
 constexpr int H = 480;
 
-class UpdateBase 
+class UpdateBase
 {
 protected:
     UpdateBase(const cv::Mat& _u, const cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
@@ -28,18 +37,63 @@ protected:
 
     static constexpr float Du = 0.21f;
     static constexpr float Dv = 0.105f;
-    static constexpr float f = 0.055f; // feed
-    static constexpr float k = 0.062f; // kill
+    static constexpr float f  = 0.055f; // feed
+    static constexpr float k  = 0.062f; // kill
 
     const cv::Mat& u, & v;
     cv::Mat& uNext, & vNext;
 };
 
-class Update 
+
+class Update1
     : public UpdateBase
 {
 public:
-    Update(const cv::Mat& _u, const cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
+    Update1(const cv::Mat& _u, const cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
+        : UpdateBase(_u, _v, _uNext, _vNext)
+    {
+    }
+
+    void operator() (const tbb::blocked_range<int>& range) const
+    {
+        for (int i = range.begin(); i < range.end(); ++i) {
+            const auto iUp = (i > 0) ? i - 1 : H - 1;
+            const auto iDown = (i + 1) % H;
+            for (int j = 0; j < W; j++) {
+                // TODO: replace with [0.05 0.2 0.05   0.2 -1 0.2   0.05 0.2 0.05 kernel
+                float lap_u, lap_v;
+                if (j == 0) { // unlikely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, W - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, W - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
+                }
+                else if (j == W - 1) { // unlikely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, 0) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, 0) - 4.0f * v.at<float>(i, j);
+
+                }
+                else { // likely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
+                }
+
+                const float _u = u.at<float>(i, j);
+                const float _v = v.at<float>(i, j);
+                const float _uNext = _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
+                const float _vNext = _v + (Dv * lap_v + _u * _v * _v - (f + k) * _v);
+                uNext.at<float>(i, j) = _uNext;
+                vNext.at<float>(i, j) = _vNext;
+            }
+        }
+    }
+};
+
+
+
+class Update2
+    : public UpdateBase
+{
+public:
+    Update2(const cv::Mat& _u, const cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
         : UpdateBase(_u, _v, _uNext, _vNext)
     {
     }
@@ -52,7 +106,7 @@ public:
             const size_t rowSize = u.step / sizeof(float);
 
             const ptrdiff_t up   = (i > 0) 
-                ? -rowSize
+                ? -(ptrdiff_t)rowSize
                 : (H - 1)*rowSize;
             const ptrdiff_t down = (i + 1) < H
                 ? rowSize
@@ -83,12 +137,10 @@ public:
                 vNext.at<float>(i, j) = _vNext;
                 pU++;
                 pV++;
-
             }
         }
     }
 };
-
 
 
 
@@ -100,6 +152,19 @@ std::pair<double, double> getGainOffset(double minVal, double maxVal)
 }
 
 
+
+void saveImage(const std::string& filename, const cv::Mat& m)
+{
+    double minVal, maxVal;
+    cv::minMaxIdx(m, &minVal, &maxVal);
+    const auto [alpha, beta] = getGainOffset(minVal, maxVal);
+    cv::Mat tmp;
+    m.convertTo(tmp, CV_8UC1, alpha * 255.0, beta * 255.0);
+    cv::imwrite(filename, tmp);
+}
+
+
+
 int main() 
 {
     cv::Mat u     = cv::Mat::ones(H, W, CV_32FC1);
@@ -108,7 +173,7 @@ int main()
     cv::Mat vNext = cv::Mat::zeros(H, W, CV_32FC1);
 
     // Initialize image with rectange (random numbers do not work)
-    std::cout << "Initializing arrays\n";
+    fmt::print("Initializing arrays\n");
     {
         auto seed = std::random_device{}();
         std::mt19937_64 rng(seed);
@@ -142,6 +207,7 @@ int main()
         }
     }
 
+#if 0
     int j = 0;
     for (int i = 0; i < maxIter; i++) {
         tbb::parallel_for(tbb::blocked_range<int>(0, H), Update(u, v, uNext, vNext));
@@ -150,17 +216,37 @@ int main()
 
         // save video frame
         if (i == framesToSave[j]) {
-            double minU, maxU;
-            cv::minMaxIdx(u, &minU, &maxU);
-            const auto [alpha, beta] = getGainOffset(minU, maxU);
-            cv::Mat tmp;
-            u.convertTo(tmp, CV_8UC1, alpha * 255.0, beta * 255.0);
-
-            std::ostringstream oss;
-            std::cout << "Loop " << i << std::endl;
-            oss << "frame_" << j << ".png";
-            cv::imwrite(oss.str(), tmp);
+            fmt::print("Loop {:06}\n", i);
+            saveImage(fmt::format("frame_{:06}.png", j), u);
             j++;
         }
     }
+#else
+    int testIter = 10000;
+    // TODO: warm up and repeat, first test has different data
+    // TODO: add functions for logical parts
+    using Clock = std::chrono::system_clock;
+    using DurationMs = std::chrono::duration<double, std::milli>;
+
+
+    for (int j = 0; j < 5; ++j) {
+        Clock::time_point stopWatchStart = Clock::now();
+        for (int i = 0; i < testIter; i++) {
+            tbb::parallel_for(tbb::blocked_range<int>(0, H), Update1(u, v, uNext, vNext));
+            std::swap(u, uNext);
+            std::swap(v, vNext);
+        }
+        DurationMs durationMs(Clock::now() - stopWatchStart);
+        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Version1");
+
+        stopWatchStart = Clock::now();
+        for (int i = 0; i < testIter; i++) {
+            tbb::parallel_for(tbb::blocked_range<int>(0, H), Update2(u, v, uNext, vNext));
+            std::swap(u, uNext);
+            std::swap(v, vNext);
+        }
+        durationMs = Clock::now() - stopWatchStart;
+        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Version2");
+    }
+#endif
 }
