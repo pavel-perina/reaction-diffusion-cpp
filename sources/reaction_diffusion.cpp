@@ -5,6 +5,9 @@
 //  C:\apps\ffmpeg.exe -r 60  -i frame_%d.png -pix_fmt yuv420p out2.yuv
 //  C:\apps\SvtAv1EncApp.exe -i .\out2.yuv -w 1280 -h 720 --fps-num 60000 --fps-denom 1001 -b out2.ivf
 //  :\apps\mkvtoolnix\mkvmerge.exe .\out2.ivf -o reaction-diffusion.webm
+
+#include "alignment_allocator.h"
+
 #include <array>
 #include <chrono>
 #include <iostream>
@@ -24,7 +27,17 @@
 constexpr int W = 640;
 constexpr int H = 480;
 
+class IUpdater 
+{
+public:
+    virtual ~IUpdater() = default;
+    virtual void iterate() = 0;
+};
+
+
+
 class UpdaterBase
+    : public IUpdater
 {
 protected:
     UpdaterBase(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
@@ -86,7 +99,7 @@ public:
         }
     }
 
-    void iterate()
+    void iterate() override
     {
         tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](tbb::blocked_range<int>& range) {
             this->operator()(range);
@@ -151,13 +164,32 @@ public:
         }
     }
 
-    void iterate()
+    void iterate() override
     {
-        tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](tbb::blocked_range<int>& range) {
-            this->operator()(range);
+        tbb::parallel_for(
+            tbb::blocked_range<int>(0, H), 
+            [&](tbb::blocked_range<int>& range) {
+                this->operator()(range);
             });
         std::swap(u, uNext);
         std::swap(v, vNext);
+    }
+};
+
+
+
+class Updater3
+    : public UpdaterBase
+{
+public:
+    Updater3(cv::Mat & _u, cv::Mat & _v, cv::Mat & _uNext, cv::Mat & _vNext)
+        : UpdaterBase(_u, _v, _uNext, _vNext)
+    {
+    }
+
+    void iterate() override
+    {
+
     }
 };
 
@@ -186,10 +218,22 @@ void saveImage(const std::string& filename, const cv::Mat& m)
 
 int main() 
 {
-    cv::Mat u     = cv::Mat::ones(H, W, CV_32FC1);
-    cv::Mat v     = cv::Mat::zeros(H, W, CV_32FC1);
-    cv::Mat uNext = cv::Mat::ones(H, W, CV_32FC1);
-    cv::Mat vNext = cv::Mat::zeros(H, W, CV_32FC1);
+    cv::Mat u, v, uNext, vNext;
+    // would be nice to use aligned alocator for unique_ptr<float[]>
+    std::array<std::vector<float, AlignmentAllocator<float, 4096>>, 4> memoryBlocks;
+    {
+        constexpr size_t padTo = 64;
+        size_t stride = ((W * sizeof(float) + (padTo - 1)) / padTo) * padTo;
+        // we need padding to 32 bytes or 8 floats
+        for (auto &block : memoryBlocks) {
+            block.resize(H * stride / sizeof(float));
+        }
+        u     = cv::Mat(H, W, CV_32FC1, memoryBlocks[0].data(), stride);
+        v     = cv::Mat(H, W, CV_32FC1, memoryBlocks[1].data(), stride);
+        uNext = cv::Mat(H, W, CV_32FC1, memoryBlocks[2].data(), stride);
+        vNext = cv::Mat(H, W, CV_32FC1, memoryBlocks[3].data(), stride);
+        u = cv::Scalar(1.0f);
+    }
 
     // Initialize image with rectange (random numbers do not work)
     fmt::print("Initializing arrays\n");
