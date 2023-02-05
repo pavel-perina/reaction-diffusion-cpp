@@ -12,18 +12,35 @@
 #include <utility>
 #include <sstream>
 
-constexpr int W = 1280;
-constexpr int H = 720;
+constexpr int W = 640;
+constexpr int H = 480;
 
-
-class Update
+class UpdateBase 
 {
-public:
-    Update(const cv::Mat& _u, const cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext) 
+protected:
+    UpdateBase(const cv::Mat& _u, const cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
         : u(_u)
         , v(_v)
         , uNext(_uNext)
         , vNext(_vNext)
+    {
+    }
+
+    static constexpr float Du = 0.21f;
+    static constexpr float Dv = 0.105f;
+    static constexpr float f = 0.055f; // feed
+    static constexpr float k = 0.062f; // kill
+
+    const cv::Mat& u, & v;
+    cv::Mat& uNext, & vNext;
+};
+
+class Update 
+    : public UpdateBase
+{
+public:
+    Update(const cv::Mat& _u, const cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
+        : UpdateBase(_u, _v, _uNext, _vNext)
     {
     }
 
@@ -59,16 +76,9 @@ public:
             }
         }
     }
-
-private:
-    static constexpr float Du = 0.21f;
-    static constexpr float Dv = 0.105f;
-    static constexpr float f = 0.055f; // feed
-    static constexpr float k = 0.062f; // kill
-
-    const cv::Mat &u, &v;
-    cv::Mat &uNext, &vNext;
 };
+
+
 
 
 std::pair<double, double> getGainOffset(double minVal, double maxVal)
@@ -105,7 +115,7 @@ int main()
     }
     
     // This is there only to slow down video at start and accelerate it in the end
-    const int maxIter = 512000;
+    constexpr int maxIter = 64000;
     std::vector<int> framesToSave;
     {
         const int nFramesToSave = 60 * 8 - 1; // 60fps, 8s
