@@ -24,10 +24,10 @@
 constexpr int W = 640;
 constexpr int H = 480;
 
-class UpdateBase
+class UpdaterBase
 {
 protected:
-    UpdateBase(const cv::Mat& _u, const cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
+    UpdaterBase(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
         : u(_u)
         , v(_v)
         , uNext(_uNext)
@@ -40,17 +40,17 @@ protected:
     static constexpr float f  = 0.055f; // feed
     static constexpr float k  = 0.062f; // kill
 
-    const cv::Mat& u, & v;
+    cv::Mat& u, & v;
     cv::Mat& uNext, & vNext;
 };
 
 
-class Update1
-    : public UpdateBase
+class Updater1
+    : public UpdaterBase
 {
 public:
-    Update1(const cv::Mat& _u, const cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
-        : UpdateBase(_u, _v, _uNext, _vNext)
+    Updater1(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
+        : UpdaterBase(_u, _v, _uNext, _vNext)
     {
     }
 
@@ -85,16 +85,26 @@ public:
             }
         }
     }
+
+    void iterate()
+    {
+        tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](tbb::blocked_range<int>& range) {
+            this->operator()(range);
+        });
+        std::swap(u, uNext);
+        std::swap(v, vNext);
+    }
+
 };
 
 
 
-class Update2
-    : public UpdateBase
+class Updater2
+    : public UpdaterBase
 {
 public:
-    Update2(const cv::Mat& _u, const cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
-        : UpdateBase(_u, _v, _uNext, _vNext)
+    Updater2(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
+        : UpdaterBase(_u, _v, _uNext, _vNext)
     {
     }
 
@@ -139,6 +149,15 @@ public:
                 pV++;
             }
         }
+    }
+
+    void iterate()
+    {
+        tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](tbb::blocked_range<int>& range) {
+            this->operator()(range);
+            });
+        std::swap(u, uNext);
+        std::swap(v, vNext);
     }
 };
 
@@ -228,22 +247,19 @@ int main()
     using Clock = std::chrono::system_clock;
     using DurationMs = std::chrono::duration<double, std::milli>;
 
-
+    Updater1 updater1(u, v, uNext, vNext);
+    Updater2 updater2(u, v, uNext, vNext);
     for (int j = 0; j < 5; ++j) {
         Clock::time_point stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
-            tbb::parallel_for(tbb::blocked_range<int>(0, H), Update1(u, v, uNext, vNext));
-            std::swap(u, uNext);
-            std::swap(v, vNext);
+            updater1.iterate();
         }
         DurationMs durationMs(Clock::now() - stopWatchStart);
         fmt::print("Duration: {:>8.3} {}\n", durationMs, "Version1");
 
         stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
-            tbb::parallel_for(tbb::blocked_range<int>(0, H), Update2(u, v, uNext, vNext));
-            std::swap(u, uNext);
-            std::swap(v, vNext);
+            updater2.iterate();
         }
         durationMs = Clock::now() - stopWatchStart;
         fmt::print("Duration: {:>8.3} {}\n", durationMs, "Version2");
