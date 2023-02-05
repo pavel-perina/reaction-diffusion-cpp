@@ -23,6 +23,7 @@
 
 #include <opencv2/opencv.hpp>
 
+#include <immintrin.h>
 
 constexpr int W = 640;
 constexpr int H = 480;
@@ -241,8 +242,67 @@ public:
 
     void processInside()
     {
-        // temporary
-        processArea(leftStop(), 1, rightStop(), H - 1);
+        tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](tbb::blocked_range<int>& range) {
+            const int jMin = leftStop();
+            const int jMax = rightStop();
+            const __m256 f_      = _mm256_set1_ps(f);
+            const __m256 negKF      = _mm256_set1_ps(-(k+f));
+            const __m256 one     = _mm256_set1_ps(1.0f);
+            const __m256 negFour = _mm256_set1_ps(-4.0f);
+            const __m256 Du_     = _mm256_set1_ps(Du);
+            const __m256 Dv_     = _mm256_set1_ps(Dv);
+
+            for (int i = range.begin(); i < range.end(); ++i) {
+                const auto iUp   = (i > 0) ? i - 1 : H - 1;
+                const auto iDown = (i + 1) % H;
+                for (int j = jMin; j < jMax; ++j) {
+
+                    __m256 uCurrent = _mm256_load_ps(&u.at<float>(i, j));
+                    __m256 vCurrent = _mm256_load_ps(&v.at<float>(i, j));
+
+                    __m256 uUp      = _mm256_load_ps (&u.at<float>(iUp, j));
+                    __m256 uDown    = _mm256_load_ps (&u.at<float>(iDown, j));
+                    __m256 uLeft    = _mm256_loadu_ps(&u.at<float>(i, j - 1));
+                    __m256 uRight   = _mm256_loadu_ps(&u.at<float>(i, j + 1));
+ 
+
+                    __m256 lap_u = _mm256_add_ps(uUp, uDown);
+                    lap_u = _mm256_add_ps(lap_u, uLeft);
+                    lap_u = _mm256_add_ps(lap_u, uRight);
+                    lap_u = _mm256_add_ps(lap_u, _mm256_mul_ps(uCurrent, negFour));
+                    __m256 Du_lap_u = _mm256_mul_ps(Du_, lap_u);
+
+                    // f*(1-u)
+                    __m256 fTerm = _mm256_sub_ps(one, uCurrent);
+                    fTerm = _mm256_mul_ps(f_, fTerm);
+
+                    __m256 uvv = _mm256_mul_ps(uCurrent, _mm256_mul_ps(vCurrent, vCurrent));
+
+                    //  _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
+                    __m256 uNext1 = _mm256_sub_ps(fTerm, uvv);
+                    __m256 uNext2 = _mm256_add_ps(uCurrent, Du_lap_u);
+                    __m256 uNext_ = _mm256_add_ps(uNext1, uNext2);
+                    _mm256_storeu_ps(&uNext.at<float>(i, j), uNext_);
+
+                    __m256 vUp    = _mm256_load_ps (&v.at<float>(iUp, j));
+                    __m256 vDown  = _mm256_load_ps (&v.at<float>(iDown, j));
+                    __m256 vLeft  = _mm256_loadu_ps(&v.at<float>(i, j - 1));
+                    __m256 vRight = _mm256_loadu_ps(&v.at<float>(i, j + 1));
+
+                    __m256 lap_v = _mm256_add_ps(vUp, vDown);
+                    lap_v = _mm256_add_ps(lap_v, vLeft);
+                    lap_v = _mm256_add_ps(lap_v, vRight);
+                    lap_v = _mm256_add_ps(lap_v, _mm256_mul_ps(vCurrent, negFour));
+                    __m256 Dv_lap_v = _mm256_mul_ps(Dv_, lap_v);
+
+                    __m256 kTerm  = _mm256_mul_ps(negKF, vCurrent);
+                    __m256 vNext1 = _mm256_add_ps(kTerm, uvv);
+                    __m256 vNext2 = _mm256_add_ps(vCurrent, Dv_lap_v);
+                    __m256 vNext_ = _mm256_add_ps(vNext1, vNext2);
+                    _mm256_storeu_ps(&vNext.at<float>(i, j), vNext_);
+                }
+            }
+        });
     }
 
     void iterate() override
@@ -277,7 +337,7 @@ void saveImage(const std::string& filename, const cv::Mat& m)
 
 
 
-int main() 
+int main()
 {
     cv::Mat u, v, uNext, vNext;
     // would be nice to use aligned alocator for unique_ptr<float[]>
