@@ -187,9 +187,70 @@ public:
     {
     }
 
+    void processArea(int x1, int y1, int x2, int y2) 
+    {
+        for (int i = y1; i < y2; ++i) {
+            const auto iUp   = (i > 0) ? i - 1 : H - 1;
+            const auto iDown = (i + 1) % H;
+            for (int j = x1; j < x2; ++j) {
+                // TODO: replace with [0.05 0.2 0.05   0.2 -1 0.2   0.05 0.2 0.05 kernel
+                float lap_u, lap_v;
+                if (j == 0) { // unlikely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, W - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, W - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
+                }
+                else if (j == W - 1) { // unlikely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, 0) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, 0) - 4.0f * v.at<float>(i, j);
+
+                }
+                else { // likely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
+                }
+                const float _u = u.at<float>(i, j);
+                const float _v = v.at<float>(i, j);
+                const float _uNext = _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
+                const float _vNext = _v + (Dv * lap_v + _u * _v * _v - (f + k) * _v);
+                uNext.at<float>(i, j) = _uNext;
+                vNext.at<float>(i, j) = _vNext;
+            }
+        }
+    }
+
+    constexpr int leftStop() const
+    {
+        return 8; // 8 floats are 32bytes for AVX alignment
+    }
+
+    int rightStop() 
+    {
+        return ((W - 1) / 8) * 8;
+    }
+
+    void processBorders()
+    {
+        // FIXME: can possibly crash on small image
+        static_assert(W > 8, "Image to small");
+        processArea(0,     0, W, 1);     // top
+        processArea(0, H - 1, W, H);     // bottom
+        processArea(0,     1, leftStop(), H - 1); // left
+        processArea(rightStop(), 1, W, H - 1); // right
+
+    }
+
+    void processInside()
+    {
+        // temporary
+        processArea(leftStop(), 1, rightStop(), H - 1);
+    }
+
     void iterate() override
     {
-
+        processBorders();
+        processInside();
+        std::swap(u, uNext);
+        std::swap(v, vNext);
     }
 };
 
@@ -291,7 +352,7 @@ int main()
     using Clock = std::chrono::system_clock;
     using DurationMs = std::chrono::duration<double, std::milli>;
 
-    Updater1 updater1(u, v, uNext, vNext);
+    Updater3 updater1(u, v, uNext, vNext);
     Updater2 updater2(u, v, uNext, vNext);
     for (int j = 0; j < 5; ++j) {
         Clock::time_point stopWatchStart = Clock::now();
