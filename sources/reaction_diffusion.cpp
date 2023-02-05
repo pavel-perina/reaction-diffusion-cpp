@@ -25,8 +25,8 @@
 
 #include <immintrin.h>
 
-constexpr int W = 512;
-constexpr int H = 512;
+constexpr int W = 1280;
+constexpr int H = 720;
 
 class IUpdater 
 {
@@ -102,7 +102,7 @@ public:
 
     void iterate() override
     {
-        tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](const tbb::blocked_range<int>& range) {
+        tbb::parallel_for(tbb::blocked_range<int>(0, H, 10), [&](const tbb::blocked_range<int>& range) {
             this->operator()(range);
         });
         std::swap(u, uNext);
@@ -168,7 +168,7 @@ public:
     void iterate() override
     {
         tbb::parallel_for(
-            tbb::blocked_range<int>(0, H), 
+            tbb::blocked_range<int>(0, H, 50), 
             [&](const tbb::blocked_range<int>& range) {
                 this->operator()(range);
             });
@@ -242,7 +242,8 @@ public:
 
     void processInside()
     {
-        tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](tbb::blocked_range<int>& range) {
+        constexpr int grainSize = 20;
+        tbb::parallel_for(tbb::blocked_range<int>(0, H, grainSize), [&](tbb::blocked_range<int>& range) {
             const int jMin = leftStop();
             const int jMax = rightStop();
             const __m256 f_      = _mm256_set1_ps(f);
@@ -301,7 +302,7 @@ public:
                     _mm256_store_ps(&vNext.at<float>(i, j), vNext_);
                 }
             }
-        } // , tbb::*partitioner()
+        } , partitioner
         );
     }
 
@@ -312,6 +313,8 @@ public:
         std::swap(u, uNext);
         std::swap(v, vNext);
     }
+
+    tbb::auto_partitioner partitioner;
 };
 
 
@@ -341,9 +344,11 @@ int main()
 {
     int numThreads = oneapi::tbb::info::default_concurrency();
     fmt::print("Machine has {} threads.\n", numThreads);
-    numThreads = 2;
+    /*numThreads = 24;
     fmt::print("Limiting to {} threads.\n", numThreads);
     tbb::global_control tbbGlob(tbb::global_control::max_allowed_parallelism, numThreads);
+    */
+    
 
     cv::Mat u, v, uNext, vNext;
     // would be nice to use aligned alocator for unique_ptr<float[]>
@@ -381,10 +386,10 @@ int main()
     }
     
     // This is there only to slow down video at start and accelerate it in the end
-    constexpr int maxIter = 64000;
+    constexpr int maxIter = 999999;
     std::vector<int> framesToSave;
     {
-        const int nFramesToSave = 60 * 8 - 1; // 60fps, 8s
+        const int nFramesToSave = 60 * 30 - 1; // 60fps, 8s
         framesToSave.reserve(nFramesToSave);
         framesToSave.emplace_back(0);
         double gamma = 3.0;
@@ -397,23 +402,22 @@ int main()
         }
     }
 
-#if 0
+#if 1
     int j = 0;
+    Updater3 updater3(u, v, uNext, vNext);
     for (int i = 0; i < maxIter; i++) {
-        tbb::parallel_for(tbb::blocked_range<int>(0, H), Update(u, v, uNext, vNext));
-        std::swap(u, uNext);
-        std::swap(v, vNext);
+        updater3.iterate();
 
         // save video frame
         if (i == framesToSave[j]) {
-            fmt::print("Loop {:06}\n", i);
+            fmt::print("Frame: {:04}, iteration {:06}\n", j, i);
             saveImage(fmt::format("frame_{:06}.png", j), u);
             j++;
         }
     }
 #else
     int testIter = 2000;
-    // TODO: warm up and repeat, first test has different data
+    fmt::print("Tests are cycling after {} iteration processing array of {}x{} pixels\n", testIter, W, H);
     // TODO: add functions for logical parts
     using Clock = std::chrono::system_clock;
     using DurationMs = std::chrono::duration<double, std::milli>;
@@ -443,8 +447,6 @@ int main()
         }
         durationMs = Clock::now() - stopWatchStart;
         fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater3: AVX");
-
-
     }
 #endif
 }
