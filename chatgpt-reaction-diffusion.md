@@ -168,3 +168,237 @@ int main() {
 
     return
 ```
+
+**Pavel Peřina**: can you create example CMakeLists.txt file for c++ example above? 
+
+> Yes, here is an example CMakeLists.txt file for the C++ reaction-diffusion code:
+
+```scss
+
+cmake_minimum_required(VERSION 3.10)
+project(reaction_diffusion)
+
+find_package(OpenCV REQUIRED)
+find_package(tbb REQUIRED)
+
+add_executable(reaction_diffusion reaction_diffusion.cpp)
+```
+> target_link_libraries(reaction_diffusion PRIVATE OpenCV::OpenCV_LIBS tbb)
+This CMakeLists.txt file sets up a project called "reaction_diffusion" and adds an executable with the same name. It also sets up dependencies on the OpenCV and tbb libraries. The executable will be linked against the libraries specified in target_link_libraries so that the necessary functions can be called from the reaction-diffusion code.
+
+
+
+
+**Pavel Peřina**: in cpp code above, can you rewrite main() function to use std::normal_distribution instead of RNG?
+
+> Sure! Here's an example of how you could use std::normal_distribution to initialize the array in the main function:
+
+```cpp
+#include <iostream>
+#include <random>
+#include <opencv2/opencv.hpp>
+#include <tbb/tbb.h>
+
+const int size = 256;
+const int steps = 10000;
+
+float u[size][size];
+float v[size][size];
+float Du = 0.16f;
+float Dv = 0.08f;
+float feed = 0.055f;
+float kill = 0.062f;
+
+std::mt19937 rng;
+std::normal_distribution<float> dist(0.5, 0.1);
+
+void update() {
+    tbb::parallel_for(tbb::blocked_range2d<int>(0, size, 0, size),
+        [&](const tbb::blocked_range2d<int> &r) {
+            for (int i = r.rows().begin(); i != r.rows().end(); ++i) {
+                for (int j = r.cols().begin(); j != r.cols().end(); ++j) {
+                    int i_prev = i == 0 ? size - 1 : i - 1;
+                    int i_next = i == size - 1 ? 0 : i + 1;
+                    int j_prev = j == 0 ? size - 1 : j - 1;
+                    int j_next = j == size - 1 ? 0 : j + 1;
+                    float u_xx = u[i_prev][j] + u[i_next][j] + u[i][j_prev] + u[i][j_next] - 4 * u[i][j];
+                    float v_xx = v[i_prev][j] + v[i_next][j] + v[i][j_prev] + v[i][j_next] - 4 * v[i][j];
+                    float u_new = u[i][j] + Du * u_xx - u[i][j] * v[i][j] * v[i][j] + feed * (1 - u[i][j]);
+                    float v_new = v[i][j] + Dv * v_xx + u[i][j] * v[i][j] * v[i][j] - (feed + kill) * v[i][j];
+                    u[i][j] = u_new;
+                    v[i][j] = v_new;
+                }
+            }
+        });
+}
+
+int main() {
+    rng.seed(std::random_device{}());
+
+    for (int i = 0; i < size; ++i) {
+        for (int j = 0; j < size; ++j) {
+            u[i][j] = dist(rng);
+            v[i][j] = dist(rng);
+        }
+    }
+
+    for (int step = 0; step < steps; ++step) {
+        update();
+    }
+
+    cv::Mat image(size, size, CV_32FC1, u);
+    cv::imwrite("result.png", image);
+
+    return 0;
+}
+```
+> In this example
+
+
+**Pavel Peřina**: 
+Interestingly this code fixes a few bugs that I saw in the previous one.
+> I'm glad that the code I provided helped resolve the issues you were encountering. If you have any further questions or concerns, don't hesitate to ask.
+
+
+**Pavel Peřina**:
+can you rewrite update() function using intristic instructions like AVX to make it faster?
+
+```cpp
+#include <immintrin.h>
+
+void update(float* u, float* v, int rows, int cols, float dt, float Du, float Dv) {
+    const int block_size = 8;
+    const __m256 Du_AVX = _mm256_set1_ps(Du);
+    const __m256 Dv_AVX = _mm256_set1_ps(Dv);
+    const __m256 dt_AVX = _mm256_set1_ps(dt);
+
+    for (int i = 1; i < rows - 1; i++) {
+        for (int j = 1; j < cols - 1; j += block_size) {
+            int k = i * cols + j;
+
+            __m256 u_curr_AVX = _mm256_loadu_ps(u + k);
+            __m256 v_curr_AVX = _mm256_loadu_ps(v + k);
+
+            __m256 u_left_AVX = _mm256_loadu_ps(u + k - 1);
+            __m256 u_right_AVX = _mm256_loadu_ps(u + k + 1);
+            __m256 u_top_AVX = _mm256_loadu_ps(u + k - cols);
+            __m256 u_bottom_AVX = _mm256_loadu_ps(u + k + cols);
+
+            __m256 v_left_AVX = _mm256_loadu_ps(v + k - 1);
+            __m256 v_right_AVX = _mm256_loadu_ps(v + k + 1);
+            __m256 v_top_AVX = _mm256_loadu_ps(v + k - cols);
+            __m256 v_bottom_AVX = _mm256_loadu_ps(v + k + cols);
+
+            __m256 u_diff_AVX = _mm256_mul_ps(Du_AVX, _mm256_add_ps(_mm256_sub_ps(u_left_AVX, _mm256_mul_ps(u_curr_AVX, _mm256_set1_ps(2.0f))), u_right_AVX));
+            u_diff_AVX = _mm256_add_ps(u_diff_AVX, _mm256_mul_ps(Du_AVX, _mm256_add_ps(_mm256_sub_ps(u_top_AVX, _mm256_mul_ps(u_curr_AVX, _mm256_set1_ps(2.0f))), u_bottom_AVX)));
+            u_diff_AVX = _mm256_mul_ps(dt_AVX, u_diff_AVX);
+
+            __m256 v_diff_AVX = _mm256_mul_ps(Dv_AVX, _mm256_add_ps(_mm256_sub_ps(v_left_AVX, _mm256_
+```
+
+```cpp
+#include <immintrin.h>
+#include <cmath>
+
+void update(float *u, float *v, float *u_temp, float *v_temp, int rows, int cols) {
+    __m256 du, dv, cu, cv, duv, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10;
+    float *u_ptr, *v_ptr, *u_temp_ptr, *v_temp_ptr;
+    int i, j, k;
+    const float du_coeff = 0.16f, dv_coeff = 0.08f;
+    const float cu_coeff = -0.04f, cv_coeff = 0.04f;
+    const float duv_coeff = 0.05f;
+
+    for (i = 1; i < rows - 1; i++) {
+        u_ptr = u + i * cols;
+        v_ptr = v + i * cols;
+        u_temp_ptr = u_temp + i * cols;
+        v_temp_ptr = v_temp + i * cols;
+        for (j = 0; j < cols - 8; j += 8) {
+            // Load data into AVX registers
+            du = _mm256_loadu_ps(u_ptr + j);
+            dv = _mm256_loadu_ps(v_ptr + j);
+            cu = _mm256_loadu_ps(u_ptr + j - cols);
+            cv = _mm256_loadu_ps(v_ptr + j - cols);
+
+            // Calculate intermediate results
+            r1 = _mm256_mul_ps(du, _mm256_set1_ps(du_coeff));
+            r2 = _mm256_mul_ps(dv, _mm256_set1_ps(dv_coeff));
+            r3 = _mm256_mul_ps(cu, _mm256_set1_ps(cu_coeff));
+            r4 = _mm256_mul_ps(cv, _mm256_set1_ps(cv_coeff));
+            r5 = _mm256_add_ps(r1, r2);
+            r6 = _mm256_add_ps(r3, r4);
+            r7 = _mm256_add_ps(du, r5);
+            r8 = _mm256_add_ps(dv, r6);
+            duv = _mm256_mul_ps(du, dv);
+            r9 = _mm256_mul_ps(duv, _mm256_set1_ps(duv_coeff));
+            r10 = _mm256_sub_ps(r8, r9);
+
+            // Store intermediate results into memory
+            _mm256_storeu_ps(u_temp_ptr + j, r7);
+            _mm256_storeu_ps(v_temp_ptr + j, r10);
+```
+
+**Pavel Peřina**: 
+why did you stopped in the middle? can you continue?
+> I apologize for stopping in the middle. Yes, I can continue. However, it's worth mentioning that rewriting the code to use AVX intrinsic instructions to improve performance can be a complex task, and it would require a good understanding of the underlying architecture and assembly language. That being said, I'll do my best to give you an idea of how the code could be optimized using AVX.
+
+
+            for (int j = 0; j < W; j++) {
+                const float lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
+                const float _u = u.at<float>(i, j);
+                const float _uNext = _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
+                uNext.at<float>(i, j) = _uNext;
+            }
+
+---
+
+Some conversion skipped here            
+
+---
+**Pavel Peřina**: 
+Ok, i guess it's too much work at once. I'll try to simplify it.
+Can you rewrite the folloring inner loop using AVX instruction set?
+
+```cpp
+            for (int j = 0; j < W; j++) {
+                const float lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
+                const float _u = u.at<float>(i, j);
+                const float _uNext = _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
+                uNext.at<float>(i, j) = _uNext;
+            }
+```
+
+> Here is a sample implementation of the inner loop using AVX instructions:
+
+```cpp
+#include <immintrin.h>
+
+...
+
+for (int j = 0; j < W; j += 8) {
+    __m256 uUp = _mm256_loadu_ps(&u.at<float>(iUp, j));
+    __m256 uDown = _mm256_loadu_ps(&u.at<float>(iDown, j));
+    __m256 uLeft = _mm256_loadu_ps(&u.at<float>(i, j - 1));
+    __m256 uRight = _mm256_loadu_ps(&u.at<float>(i, j + 1));
+    __m256 uCurrent = _mm256_loadu_ps(&u.at<float>(i, j));
+
+    __m256 lap_u = _mm256_add_ps(uUp, uDown);
+    lap_u = _mm256_add_ps(lap_u, uLeft);
+    lap_u = _mm256_add_ps(lap_u, uRight);
+
+    __m256 negFour = _mm256_set1_ps(-4.0f);
+    lap_u = _mm256_add_ps(lap_u, _mm256_mul_ps(uCurrent, negFour));
+
+    __m256 f_ = _mm256_set1_ps(f);
+    __m256 one = _mm256_set1_ps(1.0f);
+    __m256 fTerm = _mm256_sub_ps(one, uCurrent);
+    fTerm = _mm256_mul_ps(f_, fTerm);
+
+    __m256 Du_ = _mm256_set1_ps(Du);
+    __m256 uNext = _mm256_add_ps(uCurrent, _mm256_mul_ps(Du_, lap_u));
+    uNext = _mm256_add_ps(uNext, fTerm);
+
+    _mm256_storeu_ps(&uNext.at<float>(i, j), uNext);
+}
+```
+> Note that this code assumes that W is a multiple of 8, and you may need to handle the case where W is not a multiple of 8 in a separate loop or by padding the array with extra elements.
