@@ -25,6 +25,9 @@
 
 #include <immintrin.h>
 
+#include <taskflow/taskflow.hpp>
+
+
 constexpr int W = 1280;
 constexpr int H = 720;
 
@@ -319,6 +322,161 @@ public:
 
 
 
+
+class Updater4
+    : public UpdaterBase
+{
+public:
+    Updater4(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
+        : UpdaterBase(_u, _v, _uNext, _vNext)
+    {
+        constexpr int rowsPerTask = 20;
+        int iStart = 1, iEnd;
+        do {
+            iEnd = std::min(iStart + rowsPerTask, H-1);
+            if (iEnd == iStart)
+                break;
+            ranges.push_back({ iStart, iEnd });
+            iStart = iEnd;
+        } while (true);
+    }
+
+    void processArea(int x1, int y1, int x2, int y2)
+    {
+        for (int i = y1; i < y2; ++i) {
+            const auto iUp = (i > 0) ? i - 1 : H - 1;
+            const auto iDown = (i + 1) % H;
+            for (int j = x1; j < x2; ++j) {
+                // TODO: replace with [0.05 0.2 0.05   0.2 -1 0.2   0.05 0.2 0.05 kernel
+                float lap_u, lap_v;
+                if (j == 0) { // unlikely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, W - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, W - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
+                }
+                else if (j == W - 1) { // unlikely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, 0) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, 0) - 4.0f * v.at<float>(i, j);
+
+                }
+                else { // likely
+                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
+                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
+                }
+                const float _u = u.at<float>(i, j);
+                const float _v = v.at<float>(i, j);
+                const float _uNext = _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
+                const float _vNext = _v + (Dv * lap_v + _u * _v * _v - (f + k) * _v);
+                uNext.at<float>(i, j) = _uNext;
+                vNext.at<float>(i, j) = _vNext;
+            }
+        }
+    }
+
+    constexpr int leftStop() const
+    {
+        return 8; // 8 floats are 32bytes for AVX alignment
+    }
+
+    int rightStop()
+    {
+        return ((W - 1) / 8) * 8;
+    }
+
+    void processBorders()
+    {
+        // FIXME: can possibly crash on small image
+        static_assert(W > 8, "Image to small");
+        processArea(0, 0, W, 1);     // top
+        processArea(0, H - 1, W, H);     // bottom
+        processArea(0, 1, leftStop(), H - 1); // left
+        processArea(rightStop(), 1, W, H - 1); // right
+
+    }
+
+    void processInside()
+    {
+        //tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](tbb::blocked_range<int>& range) {
+        //taskflow.for_each(ranges.begin(), ranges.end(), [&](std::pair<int,int>& range) {
+        tf::Taskflow taskflow;
+        taskflow.for_each(ranges.begin(), ranges.end(), [&](const std::pair<int,int>& range) {
+            const int jMin = leftStop();
+            const int jMax = rightStop();
+            const __m256 f_ = _mm256_set1_ps(f);
+            const __m256 negKF = _mm256_set1_ps(-(k + f));
+            const __m256 one = _mm256_set1_ps(1.0f);
+            const __m256 negFour = _mm256_set1_ps(-4.0f);
+            const __m256 Du_ = _mm256_set1_ps(Du);
+            const __m256 Dv_ = _mm256_set1_ps(Dv);
+
+            for (int i = range.first; i < range.second; ++i) {
+                const auto iUp = (i > 0) ? i - 1 : H - 1;
+                const auto iDown = (i + 1) % H;
+                for (int j = jMin; j < jMax; j += 8) {
+
+                    __m256 uCurrent = _mm256_load_ps(&u.at<float>(i, j));
+
+                    __m256 uUp = _mm256_load_ps(&u.at<float>(iUp, j));
+                    __m256 uDown = _mm256_load_ps(&u.at<float>(iDown, j));
+                    __m256 uLeft = _mm256_loadu_ps(&u.at<float>(i, j - 1));
+                    __m256 uRight = _mm256_loadu_ps(&u.at<float>(i, j + 1));
+
+                    __m256 lap_u = _mm256_add_ps(uUp, uDown);
+                    lap_u = _mm256_add_ps(lap_u, uLeft);
+                    lap_u = _mm256_add_ps(lap_u, uRight);
+                    lap_u = _mm256_add_ps(lap_u, _mm256_mul_ps(uCurrent, negFour));
+                    __m256 Du_lap_u = _mm256_mul_ps(Du_, lap_u);
+
+                    // f*(1-u)
+                    __m256 fTerm = _mm256_sub_ps(one, uCurrent);
+                    fTerm = _mm256_mul_ps(f_, fTerm);
+
+                    __m256 vCurrent = _mm256_load_ps(&v.at<float>(i, j));
+                    __m256 uvv = _mm256_mul_ps(uCurrent, _mm256_mul_ps(vCurrent, vCurrent));
+
+                    //  _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
+                    __m256 uNext1 = _mm256_sub_ps(fTerm, uvv);
+                    __m256 uNext2 = _mm256_add_ps(uCurrent, Du_lap_u);
+                    __m256 uNext_ = _mm256_add_ps(uNext1, uNext2);
+                    _mm256_store_ps(&uNext.at<float>(i, j), uNext_);
+
+                    __m256 vUp = _mm256_load_ps(&v.at<float>(iUp, j));
+                    __m256 vDown = _mm256_load_ps(&v.at<float>(iDown, j));
+                    __m256 vLeft = _mm256_loadu_ps(&v.at<float>(i, j - 1));
+                    __m256 vRight = _mm256_loadu_ps(&v.at<float>(i, j + 1));
+
+                    __m256 lap_v = _mm256_add_ps(vUp, vDown);
+                    lap_v = _mm256_add_ps(lap_v, vLeft);
+                    lap_v = _mm256_add_ps(lap_v, vRight);
+                    lap_v = _mm256_add_ps(lap_v, _mm256_mul_ps(vCurrent, negFour));
+                    __m256 Dv_lap_v = _mm256_mul_ps(Dv_, lap_v);
+
+                    __m256 kTerm = _mm256_mul_ps(negKF, vCurrent);
+                    __m256 vNext1 = _mm256_add_ps(kTerm, uvv);
+                    __m256 vNext2 = _mm256_add_ps(vCurrent, Dv_lap_v);
+                    __m256 vNext_ = _mm256_add_ps(vNext1, vNext2);
+                    _mm256_store_ps(&vNext.at<float>(i, j), vNext_);
+                } // for j
+           }
+           }
+        );
+        executor.run(taskflow).wait();
+    }
+
+    void iterate() override
+    {
+        processBorders();
+        processInside();
+        std::swap(u, uNext);
+        std::swap(v, vNext);
+    }
+    std::vector<std::pair<int, int>> ranges;
+    tf::Executor executor;
+
+
+};
+
+
+
 std::pair<double, double> getGainOffset(double minVal, double maxVal)
 {
     const double gain   = (maxVal > minVal) ? 1.0 / (maxVal - minVal) : 1.0;
@@ -402,7 +560,7 @@ int main()
         }
     }
 
-#if 1
+#if 0
     int j = 0;
     Updater3 updater3(u, v, uNext, vNext);
     for (int i = 0; i < maxIter; i++) {
@@ -425,6 +583,7 @@ int main()
     Updater1 updater1(u, v, uNext, vNext);
     Updater2 updater2(u, v, uNext, vNext);
     Updater3 updater3(u, v, uNext, vNext);
+    Updater4 updater4(u, v, uNext, vNext);
     for (int j = 0; j < 5; ++j) {
         Clock::time_point stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
@@ -446,7 +605,14 @@ int main()
             updater3.iterate();
         }
         durationMs = Clock::now() - stopWatchStart;
-        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater3: AVX");
+        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater3: AVX/TBB");
+
+        stopWatchStart = Clock::now();
+        for (int i = 0; i < testIter; i++) {
+            updater4.iterate();
+        }
+        durationMs = Clock::now() - stopWatchStart;
+        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater3: AVX/TaskFlow");
     }
 #endif
 }
