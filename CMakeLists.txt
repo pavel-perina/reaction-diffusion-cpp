@@ -64,7 +64,7 @@ else()
 endif()
 
 add_executable(reaction_diffusion sources/reaction_diffusion.cpp)
-
+target_include_directories(reaction_diffusion PUBLIC include)
 target_link_libraries(reaction_diffusion 
     PRIVATE 
         Threads::Threads
