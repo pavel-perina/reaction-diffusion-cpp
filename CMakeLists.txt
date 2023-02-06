@@ -11,9 +11,8 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 ################################################################
 # OneTBB
 # TBB can be downloaded from https://github.com/oneapi-src/oneTBB/releases/download/v2021.4.0/oneapi-tbb-2021.4.0-win.zip
-find_package(TBB REQUIRED)
 set(TBB_DIR "c:/dev-c/oneapi-tbb-2021.7.0/lib/cmake/tbb")
-
+find_package(TBB REQUIRED)
 ################################################################
 ### Use OpenCV from https://opencv.org/releases/
 ### note that it's self-extracting archive that can be opened in 7zFM and opencv/build
@@ -24,9 +23,11 @@ set_target_properties( ${OpenCV_LIBS} PROPERTIES MAP_IMPORTED_CONFIG_RELWITHDEBI
 
 ################################################################
 # FMT (c++20 adds majority off this as std::format)
+set(FETCHCONTENT_QUIET FALSE)
 FetchContent_Declare(fmt
     GIT_REPOSITORY https://github.com/fmtlib/fmt
     GIT_TAG 9.1.0
+    GIT_PROGRESS TRUE
 )
 FetchContent_MakeAvailable(fmt)
 
@@ -71,12 +72,17 @@ target_link_libraries(reaction_diffusion
         fmt::fmt
         ${OpenCV_LIBS})
 
-
-get_cmake_property(_variableNames VARIABLES)
-list (SORT _variableNames)
-foreach (_variableName ${_variableNames})
-    message(STATUS "${_variableName}=${${_variableName}}")
-endforeach()
-
+# TODO: unresolved problem: no idea how to recognize debug and release
 message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 
+#get_cmake_property(_variableNames VARIABLES)
+#list (SORT _variableNames)
+#foreach (_variableName ${_variableNames})
+#    message(STATUS "${_variableName}=${${_variableName}}")
+#endforeach()
+
+# TODO: copy DLLS possibly as a post-build step
+# OpenCV has interesting variables
+#_OpenCV_LIB_PATH=C:\dev-c\opencv-4.7.0\build\x64\vc16\bin
+#__location_dbg=C:/dev-c/opencv-4.7.0/build/x64/vc16/bin/opencv_world470d.dll
+#__location_release=C:/dev-c/opencv-4.7.0/build/x64/vc16/bin/opencv_world470.dll
