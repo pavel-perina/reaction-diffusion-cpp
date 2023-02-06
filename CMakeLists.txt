@@ -1,37 +1,26 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.21)
 project(reaction_diffusion)
 
 include(FetchContent)
 
-################################################################
-# NOTE: TO SET CLANG COMPILER (OPTIONAL)
-# export CC=/usr/bin/clang; CXX=/usr/bin/clang++
-# or apt install llvm-12 clang-12 lld-12
-#    export CC=/usr/bin/clang-12; CXX=/usr/bin/clang++-12
-#    cmake . -D_CMAKE_TOOLCHAIN_PREFIX=llvm- -Bbuild-linux
-# not sure how to make clang-12 and toolchain v12 default,
-# there are some symlinks
-
-################################################################
+##########################################
+# Threads are found automagically
+find_package(Threads REQUIRED)
+set(THREADS_PREFER_PTHREAD_FLAG ON)
 
 ################################################################
 # OneTBB
-set(TBB_DIR "c:/dev-c/oneapi-tbb-2021.7.0/lib/cmake/tbb")
+# TBB can be downloaded from https://github.com/oneapi-src/oneTBB/releases/download/v2021.4.0/oneapi-tbb-2021.4.0-win.zip
 find_package(TBB REQUIRED)
-#message("TBB can be downloaded from https://github.com/oneapi-src/oneTBB/releases/download/v2021.4.0/oneapi-tbb-2021.4.0-win.zip")
+set(TBB_DIR "c:/dev-c/oneapi-tbb-2021.7.0/lib/cmake/tbb")
 
 ################################################################
-### Use OpenCV (from https://opencv.org/releases/ ours have altered paths and it does not work)
-### note that it's self-extracting archive' that can be opened in 7zFM and opencv/build
-### directory extracted to e.g. e:\dev-c\opencv-4.5.3
-
-
+### Use OpenCV from https://opencv.org/releases/
+### note that it's self-extracting archive that can be opened in 7zFM and opencv/build
+### directory extracted to e.g. e:/dev-c/opencv-4.5.3
 set(OpenCV_DIR "c:/dev-c/opencv-4.7.0/build")
 find_package(OpenCV 4.5 REQUIRED)
 set_target_properties( ${OpenCV_LIBS} PROPERTIES MAP_IMPORTED_CONFIG_RELWITHDEBINFO RELEASE )
-
-find_package(Threads REQUIRED)
-
 
 ################################################################
 # FMT (c++20 adds majority off this as std::format)
@@ -42,11 +31,22 @@ FetchContent_Declare(fmt
 FetchContent_MakeAvailable(fmt)
 
 ################################################################
+# NOTE: TO SET CLANG COMPILER (OPTIONAL)
+# export CC=/usr/bin/clang; CXX=/usr/bin/clang++
+# or apt install llvm-12 clang-12 lld-12
+#    export CC=/usr/bin/clang-12; CXX=/usr/bin/clang++-12
+#    cmake . -D_CMAKE_TOOLCHAIN_PREFIX=llvm- -Bbuild-linux
+# not sure how to make clang-12 and toolchain v12 default,
+# there are some symlinks
+################################################################
+
+
+################################################################
 ### SET C++17 STANDARD
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Native arch on Linux (do not distribute such binary)
+# Native arch on Linux (do not distribute such binary, it's for optimizations)
 include(CheckCXXCompilerFlag)
 CHECK_CXX_COMPILER_FLAG("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
 if(COMPILER_SUPPORTS_MARCH_NATIVE)
@@ -62,13 +62,21 @@ else()
     add_compile_options(-Wall -Wextra -pedantic)
 endif()
 
-### ADD SUBDIRS
-
-# ???
 add_executable(reaction_diffusion sources/reaction_diffusion.cpp)
 
-set(THREADS_PREFER_PTHREAD_FLAG ON)
+target_link_libraries(reaction_diffusion 
+    PRIVATE 
+        Threads::Threads
+        TBB::tbb
+        fmt::fmt
+        ${OpenCV_LIBS})
 
-target_link_libraries(reaction_diffusion PRIVATE Threads::Threads TBB::tbb fmt::fmt  ${OpenCV_LIBS})
 
+get_cmake_property(_variableNames VARIABLES)
+list (SORT _variableNames)
+foreach (_variableName ${_variableNames})
+    message(STATUS "${_variableName}=${${_variableName}}")
+endforeach()
+
+message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 
