@@ -28,8 +28,8 @@
 #include <taskflow/taskflow.hpp>
 
 
-constexpr int W = 1280;
-constexpr int H = 720;
+constexpr int W = 400;
+constexpr int H = 400;
 
 class IUpdater 
 {
@@ -227,7 +227,7 @@ public:
         return 8; // 8 floats are 32bytes for AVX alignment
     }
 
-    int rightStop() 
+    constexpr int rightStop() const
     {
         return ((W - 1) / 8) * 8;
     }
@@ -250,8 +250,7 @@ public:
             const int jMin = leftStop();
             const int jMax = rightStop();
             const __m256 f_      = _mm256_set1_ps(f);
-            const __m256 negKF      = _mm256_set1_ps(-(k+f));
-            const __m256 one     = _mm256_set1_ps(1.0f);
+            const __m256 negKF   = _mm256_set1_ps(-(k+f));
             const __m256 negFour = _mm256_set1_ps(-4.0f);
             const __m256 Du_     = _mm256_set1_ps(Du);
             const __m256 Dv_     = _mm256_set1_ps(Dv);
@@ -271,19 +270,16 @@ public:
                     __m256 lap_u = _mm256_add_ps(uUp, uDown);
                     lap_u = _mm256_add_ps(lap_u, uLeft);
                     lap_u = _mm256_add_ps(lap_u, uRight);
-                    lap_u = _mm256_add_ps(lap_u, _mm256_mul_ps(uCurrent, negFour));
-                    __m256 Du_lap_u = _mm256_mul_ps(Du_, lap_u);
+                    lap_u = _mm256_fmadd_ps(negFour, uCurrent, lap_u);  //-4*u+lap_u
 
-                    // f*(1-u)
-                    __m256 fTerm = _mm256_sub_ps(one, uCurrent);
-                    fTerm = _mm256_mul_ps(f_, fTerm);
+                    __m256 fTerm = _mm256_fnmadd_ps(f_, uCurrent, f_);  // f*(1-u) = -f*u + f
 
                     __m256 vCurrent = _mm256_load_ps(&v.at<float>(i, j));
                     __m256 uvv = _mm256_mul_ps(uCurrent, _mm256_mul_ps(vCurrent, vCurrent));
 
                     //  _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
-                    __m256 uNext1 = _mm256_sub_ps(fTerm, uvv);
-                    __m256 uNext2 = _mm256_add_ps(uCurrent, Du_lap_u);
+                    __m256 uNext1 = _mm256_fmadd_ps(Du_, lap_u, uCurrent);
+                    __m256 uNext2 = _mm256_sub_ps(fTerm, uvv);
                     __m256 uNext_ = _mm256_add_ps(uNext1, uNext2);
                     _mm256_store_ps(&uNext.at<float>(i, j), uNext_);
 
@@ -295,12 +291,11 @@ public:
                     __m256 lap_v = _mm256_add_ps(vUp, vDown);
                     lap_v = _mm256_add_ps(lap_v, vLeft);
                     lap_v = _mm256_add_ps(lap_v, vRight);
-                    lap_v = _mm256_add_ps(lap_v, _mm256_mul_ps(vCurrent, negFour));
-                    __m256 Dv_lap_v = _mm256_mul_ps(Dv_, lap_v);
+                    lap_v = _mm256_fmadd_ps(negFour, vCurrent, lap_v);
 
-                    __m256 kTerm  = _mm256_mul_ps(negKF, vCurrent);
-                    __m256 vNext1 = _mm256_add_ps(kTerm, uvv);
-                    __m256 vNext2 = _mm256_add_ps(vCurrent, Dv_lap_v);
+                    // _v + (Dv * lap_v + _u * _v * _v - (f + k) * _v);
+                    __m256 vNext1 = _mm256_fmadd_ps(Dv_, lap_v, vCurrent);  //Dv_ * lap_v + v
+                    __m256 vNext2 = _mm256_fmadd_ps(negKF, vCurrent, uvv);  // -(f + k) * _v +  _u * _v * _v
                     __m256 vNext_ = _mm256_add_ps(vNext1, vNext2);
                     _mm256_store_ps(&vNext.at<float>(i, j), vNext_);
                 }
