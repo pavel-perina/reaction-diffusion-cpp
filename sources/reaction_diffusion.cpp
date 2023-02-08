@@ -27,9 +27,15 @@
 
 #include <taskflow/taskflow.hpp>
 
-
+#ifdef _DEBUG
 constexpr int W = 400;
 constexpr int H = 400;
+#else
+constexpr int W = 1280;
+constexpr int H = 720;
+#endif
+
+constexpr int nThreads = 4;
 
 class IUpdater 
 {
@@ -54,9 +60,14 @@ protected:
 
     static constexpr float Du = 0.21f;
     static constexpr float Dv = 0.105f;
+#if 0   
     static constexpr float f  = 0.055f; // feed
     static constexpr float k  = 0.062f; // kill
-
+#else
+    // http://mrob.com/pub/comp/xmorphia/F100/F100-k470.html
+    static constexpr float f = 0.01f; // feed
+    static constexpr float k = 0.047f; // kill
+#endif
     cv::Mat& u, & v;
     cv::Mat& uNext, & vNext;
 };
@@ -181,7 +192,7 @@ public:
 };
 
 
-
+// TODO: make base class (UpdateBaseAvx) and lambda for a loop (with iRange as pair), code is getting long
 class Updater3
     : public UpdaterBase
 {
@@ -324,6 +335,7 @@ class Updater4
 public:
     Updater4(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
         : UpdaterBase(_u, _v, _uNext, _vNext)
+        , executor(nThreads)
     {
         constexpr int rowsPerTask = 20;
         int iStart = 1, iEnd;
@@ -392,7 +404,6 @@ public:
     {
         //tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](tbb::blocked_range<int>& range) {
         //taskflow.for_each(ranges.begin(), ranges.end(), [&](std::pair<int,int>& range) {
-        tf::Taskflow taskflow;
         taskflow.for_each(ranges.begin(), ranges.end(), [&](const std::pair<int,int>& range) {
             const int jMin = leftStop();
             const int jMax = rightStop();
@@ -451,10 +462,10 @@ public:
                     __m256 vNext_ = _mm256_add_ps(vNext1, vNext2);
                     _mm256_store_ps(&vNext.at<float>(i, j), vNext_);
                 } // for j
-           }
-           }
-        );
+            }
+        });
         executor.run(taskflow).wait();
+        taskflow.clear();
     }
 
     void iterate() override
@@ -464,10 +475,10 @@ public:
         std::swap(u, uNext);
         std::swap(v, vNext);
     }
+
     std::vector<std::pair<int, int>> ranges;
     tf::Executor executor;
-
-
+    tf::Taskflow taskflow;
 };
 
 
@@ -492,16 +503,14 @@ void saveImage(const std::string& filename, const cv::Mat& m)
 }
 
 
-
+// TODO: divide into fuctions for video export and test (or even two binaries)
 int main()
 {
     int numThreads = oneapi::tbb::info::default_concurrency();
     fmt::print("Machine has {} threads.\n", numThreads);
-    /*numThreads = 24;
+    numThreads = nThreads;
     fmt::print("Limiting to {} threads.\n", numThreads);
     tbb::global_control tbbGlob(tbb::global_control::max_allowed_parallelism, numThreads);
-    */
-    
 
     cv::Mat u, v, uNext, vNext;
     // would be nice to use aligned alocator for unique_ptr<float[]>
@@ -539,13 +548,13 @@ int main()
     }
     
     // This is there only to slow down video at start and accelerate it in the end
-    constexpr int maxIter = 999999;
+    constexpr int maxIter = (60*30-1)*25;
     std::vector<int> framesToSave;
     {
         const int nFramesToSave = 60 * 30 - 1; // 60fps, 8s
         framesToSave.reserve(nFramesToSave);
         framesToSave.emplace_back(0);
-        double gamma = 3.0;
+        double gamma = /*3.0*/1.0;
         for (int i = 1; i < nFramesToSave; ++i) {
             double timeLinePos = (double)i / nFramesToSave;
             int frame = (int)(pow(timeLinePos, gamma) * maxIter);
@@ -555,7 +564,7 @@ int main()
         }
     }
 
-#if 0
+#if 1
     int j = 0;
     Updater3 updater3(u, v, uNext, vNext);
     for (int i = 0; i < maxIter; i++) {
