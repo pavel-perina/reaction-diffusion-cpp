@@ -60,7 +60,8 @@ if (MSVC)
     # warning C4127: conditional expression is constant (https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-4-c4127?view=msvc-160)
     add_compile_options(/W4 /wd4127)
 else()
-    add_compile_options(-Wall -Wextra -pedantic)
+	# march native for avx	
+    add_compile_options(-Wall -Wextra -pedantic -mavx)
 endif()
 
 add_executable(reaction_diffusion sources/reaction_diffusion.cpp)

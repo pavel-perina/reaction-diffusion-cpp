@@ -6,13 +6,11 @@
 //! MSVC2017 is not compatible with C++17 std::aligned_alloc here
 
 #pragma once
-
+#include <cstddef>
+#include <cstdlib>
 #ifdef _WINDOWS
 #include <stdlib.h>
 #include <malloc.h>
-#include <cstddef>
-#else
-#include <cstdlib>
 #endif
 
 //! \class AlignmentAllocator
@@ -61,7 +59,7 @@ public:
         // number of bytes to allocate, alignment in bytes
         return (pointer)_aligned_malloc(n * sizeof(value_type), N);
 #else
-        return std::aligned_alloc(N, n*sizeof(value_type));
+        return (pointer) std::aligned_alloc(N, n*sizeof(value_type));
 #endif
     }
 
@@ -103,7 +101,7 @@ public:
     // Returns true if and only if storage allocated from *this
     // can be deallocated from other, and vice versa.
     // Always returns true for stateless allocators.
-    bool operator==(const AlignmentAllocator<T,N>& other) const
+    bool operator==(const AlignmentAllocator<T,N>& /*other*/) const
     {
         return true;
     }

@@ -8,6 +8,7 @@
 
 #include "alignment_allocator.h"
 
+#include <cstddef> // std::ptrdiff_t on FreeBSD
 #include <array>
 #include <chrono>
 #include <iostream>
@@ -26,6 +27,8 @@
 #include <immintrin.h>
 
 #include <taskflow/taskflow.hpp>
+
+#define HAS_AVX 0
 
 #ifdef _DEBUG
 constexpr int W = 400;
@@ -191,7 +194,7 @@ public:
     }
 };
 
-
+#ifdef HAS_AVX
 // TODO: make base class (UpdateBaseAvx) and lambda for a loop (with iRange as pair), code is getting long
 class Updater3
     : public UpdaterBase
@@ -481,6 +484,7 @@ public:
     tf::Taskflow taskflow;
 };
 
+#endif // HAS_AVX
 
 
 std::pair<double, double> getGainOffset(double minVal, double maxVal)
@@ -566,9 +570,13 @@ int main()
 
 #if 1
     int j = 0;
-    Updater3 updater3(u, v, uNext, vNext);
+#if HAS_AVX    
+    Updater3 updater(u, v, uNext, vNext);
+#else
+    Updater1 updater(u, v, uNext, vNext);
+#endif
     for (int i = 0; i < maxIter; i++) {
-        updater3.iterate();
+        updater.iterate();
 
         // save video frame
         if (i == framesToSave[j]) {
@@ -620,3 +628,4 @@ int main()
     }
 #endif
 }
+
