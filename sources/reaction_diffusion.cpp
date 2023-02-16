@@ -6,6 +6,9 @@
 //  C:\apps\SvtAv1EncApp.exe -i .\out2.yuv -w 1280 -h 720 --fps-num 60000 --fps-denom 1001 -b out2.ivf
 //  :\apps\mkvtoolnix\mkvmerge.exe .\out2.ivf -o reaction-diffusion.webm
 
+// TODO: solve this better
+#define HAS_AVX 0
+
 #include "alignment_allocator.h"
 
 #include <cstddef> // std::ptrdiff_t on FreeBSD
@@ -24,12 +27,10 @@
 
 #include <opencv2/opencv.hpp>
 
+#if HAS_AVX
 #include <immintrin.h>
-
 #include <taskflow/taskflow.hpp>
-
-// TODO: solve this better
-#define HAS_AVX 0
+#endif
 
 #ifdef _DEBUG
 constexpr int W = 400;
@@ -41,7 +42,7 @@ constexpr int H = 720;
 
 constexpr int nThreads = 4;
 
-class IUpdater 
+class IUpdater
 {
 public:
     virtual ~IUpdater() = default;
@@ -64,7 +65,7 @@ protected:
 
     static constexpr float Du = 0.21f;
     static constexpr float Dv = 0.105f;
-#if 0   
+#if 0
     static constexpr float f  = 0.055f; // feed
     static constexpr float k  = 0.062f; // kill
 #else
@@ -140,14 +141,14 @@ public:
     {
     }
 
-    void operator() (const tbb::blocked_range<int> &range) const 
+    void operator() (const tbb::blocked_range<int> &range) const
     {
         for (int i = range.begin(); i < range.end(); ++i) {
             const float* pU = u.ptr<float>(i);
             const float* pV = v.ptr<float>(i);
             const size_t rowSize = u.step / sizeof(float);
 
-            const ptrdiff_t up   = (i > 0) 
+            const ptrdiff_t up   = (i > 0)
                 ? -(ptrdiff_t)rowSize
                 : (H - 1)*rowSize;
             const ptrdiff_t down = (i + 1) < H
@@ -156,7 +157,7 @@ public:
 
             for (int j = 0; j < W; j++) {
                 // TODO: replace with [0.05 0.2 0.05   0.2 -1 0.2   0.05 0.2 0.05 kernel
-                float lap_u, lap_v; 
+                float lap_u, lap_v;
                 if (j == 0) { // unlikely
                     lap_u = pU[up] + pU[down] + u.at<float>(i, W - 1) + pU[+1] - 4.0f * pU[0];
                     lap_v = pV[up] + pV[down] + v.at<float>(i, W - 1) + pV[+1] - 4.0f * pV[0];
@@ -186,7 +187,7 @@ public:
     void iterate() override
     {
         tbb::parallel_for(
-            tbb::blocked_range<int>(0, H, 50), 
+            tbb::blocked_range<int>(0, H, 50),
             [&](const tbb::blocked_range<int>& range) {
                 this->operator()(range);
             });
@@ -195,7 +196,7 @@ public:
     }
 };
 
-#ifdef HAS_AVX
+#if HAS_AVX
 // TODO: make base class (UpdateBaseAvx) and lambda for a loop (with iRange as pair), code is getting long
 class Updater3
     : public UpdaterBase
@@ -206,7 +207,7 @@ public:
     {
     }
 
-    void processArea(int x1, int y1, int x2, int y2) 
+    void processArea(int x1, int y1, int x2, int y2)
     {
         for (int i = y1; i < y2; ++i) {
             const auto iUp   = (i > 0) ? i - 1 : H - 1;
@@ -281,7 +282,7 @@ public:
                     __m256 uDown    = _mm256_load_ps (&u.at<float>(iDown, j));
                     __m256 uLeft    = _mm256_loadu_ps(&u.at<float>(i, j - 1));
                     __m256 uRight   = _mm256_loadu_ps(&u.at<float>(i, j + 1));
- 
+
                     __m256 lap_u = _mm256_add_ps(uUp, uDown);
                     lap_u = _mm256_add_ps(lap_u, uLeft);
                     lap_u = _mm256_add_ps(lap_u, uRight);
@@ -514,7 +515,7 @@ int main()
     //int numThreads = tbb::info::default_concurrency();
     int numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
     fmt::print("Machine has {} threads.\n", numThreads);
-    numThreads = nThreads;
+    numThreads = std::min(nThreads, numThreads);
     fmt::print("Limiting to {} threads.\n", numThreads);
     tbb::global_control tbbGlob(tbb::global_control::max_allowed_parallelism, numThreads);
 
@@ -552,7 +553,7 @@ int main()
             }
         }
     }
-    
+
     // This is there only to slow down video at start and accelerate it in the end
     constexpr int maxIter = (60*30-1)*25;
     std::vector<int> framesToSave;
@@ -570,9 +571,9 @@ int main()
         }
     }
 
-#if 1
+#if 0
     int j = 0;
-#if HAS_AVX    
+#if HAS_AVX
     Updater3 updater(u, v, uNext, vNext);
 #else
     Updater1 updater(u, v, uNext, vNext);
@@ -596,8 +597,10 @@ int main()
 
     Updater1 updater1(u, v, uNext, vNext);
     Updater2 updater2(u, v, uNext, vNext);
+#if HAS_AVX
     Updater3 updater3(u, v, uNext, vNext);
     Updater4 updater4(u, v, uNext, vNext);
+#endif
     for (int j = 0; j < 5; ++j) {
         Clock::time_point stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
@@ -605,15 +608,15 @@ int main()
         }
         DurationMs durationMs(Clock::now() - stopWatchStart);
         fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater1: trivial");
-        // 
+        //
         stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
             updater2.iterate();
         }
         durationMs = Clock::now() - stopWatchStart;
         fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater2: no mat.at<float>(x,y)");
-
-        // 
+#if HAS_AVX
+        //
         stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
             updater3.iterate();
@@ -627,7 +630,7 @@ int main()
         }
         durationMs = Clock::now() - stopWatchStart;
         fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater3: AVX/TaskFlow");
+#endif
     }
 #endif
 }
-
