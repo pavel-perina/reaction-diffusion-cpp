@@ -7,7 +7,7 @@
 //  :\apps\mkvtoolnix\mkvmerge.exe .\out2.ivf -o reaction-diffusion.webm
 
 // TODO: solve this better
-#define HAS_AVX 0
+#define HAS_AVX 1
 
 #include "alignment_allocator.h"
 
