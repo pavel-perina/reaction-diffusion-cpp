@@ -590,6 +590,7 @@ int main()
     }
 #else
     int testIter = 2000;
+    const double testBlockSize = ((size_t)H * W * 2 * sizeof(float) * testIter) / (1024.0*1024.0*1024.0);
     fmt::print("Tests are cycling after {} iteration processing array of {}x{} pixels\n", testIter, W, H);
     // TODO: add functions for logical parts
     using Clock = std::chrono::system_clock;
@@ -602,19 +603,22 @@ int main()
     Updater4 updater4(u, v, uNext, vNext);
 #endif
     for (int j = 0; j < 5; ++j) {
+        double gbps;
         Clock::time_point stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
             updater1.iterate();
         }
         DurationMs durationMs(Clock::now() - stopWatchStart);
-        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater1: trivial");
+        gbps = testBlockSize / (durationMs.count()/1000.0);
+        fmt::print("Duration: {:>8.3}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater1: trivial");
         //
         stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
             updater2.iterate();
         }
         durationMs = Clock::now() - stopWatchStart;
-        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater2: no mat.at<float>(x,y)");
+        gbps = testBlockSize / (durationMs.count()/1000.0);
+        fmt::print("Duration: {:>8.3}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater2: no mat.at<float>(x,y)");
 #if HAS_AVX
         //
         stopWatchStart = Clock::now();
@@ -622,14 +626,16 @@ int main()
             updater3.iterate();
         }
         durationMs = Clock::now() - stopWatchStart;
-        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater3: AVX/TBB");
+        gbps = testBlockSize / (durationMs.count()/1000.0);
+        fmt::print("Duration: {:>8.3}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater3: AVX/TBB");
 
         stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
             updater4.iterate();
         }
         durationMs = Clock::now() - stopWatchStart;
-        fmt::print("Duration: {:>8.3} {}\n", durationMs, "Updater3: AVX/TaskFlow");
+        gbps = testBlockSize / (durationMs.count()/1000.0);
+        fmt::print("Duration: {:>8.3}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater3: AVX/TaskFlow");
 #endif
     }
 #endif
