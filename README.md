@@ -45,33 +45,28 @@ or `RelWithDbgInfo`
 
 Sorry, for the invenience I tried one hour to create CMake's postbuild step
 
-## FreeBSD specific
+## Specific for Linux or FreeBSD in VirtualBox
 
+NOTE: CMAKE_BUILD_TYPE is optional. Can be `Debug` or `Release`
+
+To install prerequisites run the following commands as root
+| System | Command |
+|---|---|
+| FreeBSD | `pkg install cmake opencv onetbb` |
+| Ubuntu  | `apt install cmake libtbb-dev libopencv-dev` |
+| OpenSuse | `zypper install cmake tbb-devel opencv-devel` |
+
+Then compile sources
 ```
-# pkg install opencv onetbb
+$ cd reaction-diffusion-cpp
 $ cmake -DCMAKE_BUILD_TYPE=Debug . -B build
 $ cd build
 $ make
 $ ./reaction_diffusion
-Illegal instruction (core dumped)
-$ lldb --core reaction_diffusion.core reaction_diffusion
-(lldb) backtrace
 ```
-There are is a problem that AVX instruction are not supported in VirtualBox.
+There are is a problem that AVX/FMA instruction sets are not supported in VirtualBox.
 * `-march=x86-64-v3` program compiles and crashes, no matter if program has enabled instric instructions or not
-* `-march=native` is ok, if AVX instructions are disabled
-
-## Ubuntu 22.04 specific
-
-```
-# apt install cmake libtbb-dev libopencv-dev
-$ cmake -DCMAKE_BUILD_TYPE=Debug . -B build
-$ cd build
-$ make
-error: 'tbb::info' has not been declared
-$ apt show libtbb-dev
-Version: 2020.1-2
-```
+* `-march=native` is ok, if AVX instructions are disabled (see `#define HAS_AVX` in the code)
 
 # Notes
 

@@ -511,7 +511,8 @@ void saveImage(const std::string& filename, const cv::Mat& m)
 // TODO: divide into fuctions for video export and test (or even two binaries)
 int main()
 {
-    int numThreads = tbb::info::default_concurrency();
+    //int numThreads = tbb::info::default_concurrency();
+    int numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
     fmt::print("Machine has {} threads.\n", numThreads);
     numThreads = nThreads;
     fmt::print("Limiting to {} threads.\n", numThreads);
