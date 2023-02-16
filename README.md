@@ -24,10 +24,11 @@
 * FmtLib https://github.com/fmtlib/fmt (since v0.2, fetched by CMake)
 * TaskFlow 3.4.0 https://github.com/taskflow/taskflow (since v0.5, partially included, headers only)
 
-Editing CMakeLists.txt file is needed (i hardcoded my paths to libraries there)
+## Windows specific
+
+Editing CMakeLists.txt file is needed on Windows (i hardcoded my paths to libraries there)
 
 These DLLs must be copied into directory with binary manually from
-
 ```
 opencv-4.7.0\build\x64\vc16\bin 
 oneapi-tbb-2021.7.0\redist\intel64\vc14\
@@ -42,7 +43,35 @@ Debug/tbbmalloc_debug.dll
 ```
 or `RelWithDbgInfo`
 
-Sorry, for the invenience I tried one hour to create CMake's postbuild step 
+Sorry, for the invenience I tried one hour to create CMake's postbuild step
+
+## FreeBSD specific
+
+```
+# pkg install opencv onetbb
+$ cmake -DCMAKE_BUILD_TYPE=Debug . -B build
+$ cd build
+$ make
+$ ./reaction_diffusion
+Illegal instruction (core dumped)
+$ lldb --core reaction_diffusion.core reaction_diffusion
+(lldb) backtrace
+```
+There are is a problem that AVX instruction are not supported in VirtualBox.
+* `-march=x86-64-v3` program compiles and crashes, no matter if program has enabled instric instructions or not
+* `-march=native` is ok, if AVX instructions are disabled
+
+## Ubuntu 22.04 specific
+
+```
+# apt install cmake libtbb-dev libopencv-dev
+$ cmake -DCMAKE_BUILD_TYPE=Debug . -B build
+$ cd build
+$ make
+error: 'tbb::info' has not been declared
+$ apt show libtbb-dev
+Version: 2020.1-2
+```
 
 # Notes
 

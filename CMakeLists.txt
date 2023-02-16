@@ -18,7 +18,7 @@ find_package(TBB REQUIRED)
 ### note that it's self-extracting archive that can be opened in 7zFM and opencv/build
 ### directory extracted to e.g. e:/dev-c/opencv-4.5.3
 set(OpenCV_DIR "c:/dev-c/opencv-4.7.0/build")
-find_package(OpenCV 4.5 REQUIRED)
+find_package(OpenCV 4.2 REQUIRED)
 set_target_properties( ${OpenCV_LIBS} PROPERTIES MAP_IMPORTED_CONFIG_RELWITHDEBINFO RELEASE )
 
 ################################################################
@@ -61,7 +61,7 @@ if (MSVC)
     add_compile_options(/W4 /wd4127)
 else()
 	# march native for avx	
-    add_compile_options(-Wall -Wextra -pedantic -mavx)
+    add_compile_options(-Wall -Wextra -pedantic)
 endif()
 
 add_executable(reaction_diffusion sources/reaction_diffusion.cpp)
