@@ -1,6 +1,4 @@
-// https://www.karlsims.com/rd.html
-// https://www.youtube.com/watch?v=Iigfe7ZQfyY
-// video:
+// Creating video:
 //  C:\apps\ffmpeg.exe -r 60  -i frame_%d.png -c:v libx264 -pix_fmt yuv420p out2.mp4
 //  C:\apps\ffmpeg.exe -r 60  -i frame_%d.png -pix_fmt yuv420p out2.yuv
 //  C:\apps\SvtAv1EncApp.exe -i .\out2.yuv -w 1280 -h 720 --fps-num 60000 --fps-denom 1001 -b out2.ivf

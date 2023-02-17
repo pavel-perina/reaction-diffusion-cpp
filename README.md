@@ -95,6 +95,7 @@ According to various sources (e.g. https://www.cpu-monkey.com/en/cpu-amd_ryzen_9
 
 * Improvement in CMakeLists.txt
 * Linux, FreeBSD compatibility
+* Data throughput measurement
 
 ### v0.6
 
