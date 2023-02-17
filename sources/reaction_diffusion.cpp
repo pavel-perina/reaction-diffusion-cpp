@@ -610,7 +610,7 @@ int main()
         }
         DurationMs durationMs(Clock::now() - stopWatchStart);
         gbps = testBlockSize / (durationMs.count()/1000.0);
-        fmt::print("Duration: {:>8.3}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater1: trivial");
+        fmt::print("Duration: {:>9.1}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater1: trivial");
         //
         stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
@@ -618,7 +618,7 @@ int main()
         }
         durationMs = Clock::now() - stopWatchStart;
         gbps = testBlockSize / (durationMs.count()/1000.0);
-        fmt::print("Duration: {:>8.3}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater2: no mat.at<float>(x,y)");
+        fmt::print("Duration: {:>9.1}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater2: no mat.at<float>(x,y)");
 #if HAS_AVX
         //
         stopWatchStart = Clock::now();
@@ -627,7 +627,7 @@ int main()
         }
         durationMs = Clock::now() - stopWatchStart;
         gbps = testBlockSize / (durationMs.count()/1000.0);
-        fmt::print("Duration: {:>8.3}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater3: AVX/TBB");
+        fmt::print("Duration: {:>9.1}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater3: AVX/TBB");
 
         stopWatchStart = Clock::now();
         for (int i = 0; i < testIter; i++) {
@@ -635,7 +635,7 @@ int main()
         }
         durationMs = Clock::now() - stopWatchStart;
         gbps = testBlockSize / (durationMs.count()/1000.0);
-        fmt::print("Duration: {:>8.3}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater3: AVX/TaskFlow");
+        fmt::print("Duration: {:>9.1}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater4: AVX/TaskFlow");
 #endif
     }
 #endif

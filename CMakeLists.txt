@@ -34,9 +34,10 @@ FetchContent_MakeAvailable(fmt)
 ################################################################
 # NOTE: TO SET CLANG COMPILER (OPTIONAL)
 # export CC=/usr/bin/clang; CXX=/usr/bin/clang++
-# or apt install llvm-12 clang-12 lld-12
-#    export CC=/usr/bin/clang-12; CXX=/usr/bin/clang++-12
-#    cmake . -D_CMAKE_TOOLCHAIN_PREFIX=llvm- -Bbuild-linux
+# or sudo apt install llvm-12 clang-12 lld-12 libstdc++-10-dev
+#    export CC=/usr/bin/clang-12
+#    export CXX=/usr/bin/clang++-12
+#    cmake . -D_CMAKE_TOOLCHAIN_PREFIX=llvm- -B build-clang
 # not sure how to make clang-12 and toolchain v12 default,
 # there are some symlinks
 ################################################################
@@ -56,11 +57,10 @@ endif()
 
 ### SET WARNINGS
 if (MSVC)
-    # Enable all, but 
-    # warning C4127: conditional expression is constant (https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-4-c4127?view=msvc-160)
+    # Enable all, but warning C4127: conditional expression is constant 
+    # (https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-4-c4127?view=msvc-160)
     add_compile_options(/W4 /wd4127)
 else()
-	# march native for avx	
     add_compile_options(-Wall -Wextra -pedantic)
 endif()
 
@@ -82,8 +82,41 @@ message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 #    message(STATUS "${_variableName}=${${_variableName}}")
 #endforeach()
 
-# TODO: copy DLLS possibly as a post-build step
-# OpenCV has interesting variables
-#_OpenCV_LIB_PATH=C:\dev-c\opencv-4.7.0\build\x64\vc16\bin
-#__location_dbg=C:/dev-c/opencv-4.7.0/build/x64/vc16/bin/opencv_world470d.dll
-#__location_release=C:/dev-c/opencv-4.7.0/build/x64/vc16/bin/opencv_world470.dll
+# This is what ChatGPT says about this code (was not capable to propse anything close to it)
+#
+# This CMake code snippet copies the required DLL files to the output directory after building the target
+# reaction_diffusion if the CMake generator is set to MSVC (i.e., if Visual Studio is being used).
+# It first gets the properties of the imported locations of the OpenCV and TBB libraries for both 
+# the debug and release configurations using the get_target_property command. Then it uses the 
+# add_custom_command command to copy the required DLLs for the specified configurations to the output directory.
+#
+# The COMMAND keyword specifies the actual command that needs to be executed to copy the DLL files.
+# The $<TARGET_FILE_DIR:reaction_diffusion> generator expression is used to obtain the directory where the
+# built target reaction_diffusion will be placed.
+#
+# The $<CONFIG:Debug> and $<CONFIG:Release,RelWithDebInfo> generator expressions are used to conditionally
+# specify which DLL files need to be copied depending on the build configuration. If the build configuration
+# is set to Debug, it will copy the debug DLLs, and if it is set to Release or RelWithDebInfo, it will copy the release DLLs.
+#
+# Finally, the COMMENT keyword is used to display a message during the build process indicating that the DLLs are being copied.
+
+if (MSVC)
+    get_target_property(__dll_opencv_world_dbg opencv_world   IMPORTED_LOCATION_DEBUG)
+    get_target_property(__dll_opencv_world_rel opencv_world   IMPORTED_LOCATION_RELEASE)
+    get_target_property(__dll_tbb_dbg          TBB::tbb       IMPORTED_LOCATION_DEBUG)
+    get_target_property(__dll_tbb_rel          TBB::tbb       IMPORTED_LOCATION_RELEASE)
+    get_target_property(__dll_tbb_malloc_dbg   TBB::tbbmalloc IMPORTED_LOCATION_DEBUG)
+    get_target_property(__dll_tbb_malloc_rel   TBB::tbbmalloc IMPORTED_LOCATION_RELEASE)
+    add_custom_command(TARGET reaction_diffusion POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<$<CONFIG:Debug>:${__dll_opencv_world_dbg}>$<$<CONFIG:Release,RelWithDebInfo>:${__dll_opencv_world_rel}>"
+        $<TARGET_FILE_DIR:reaction_diffusion>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<$<CONFIG:Debug>:${__dll_tbb_dbg}>$<$<CONFIG:Release,RelWithDebInfo>:${__dll_tbb_rel}>"
+        $<TARGET_FILE_DIR:reaction_diffusion>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<$<CONFIG:Debug>:${__dll_tbb_malloc_dbg}>$<$<CONFIG:Release,RelWithDebInfo>:${__dll_tbb_malloc_rel}>"
+        $<TARGET_FILE_DIR:reaction_diffusion>
+        COMMENT "Copying DLLs ..."
+    )
+endif()
