@@ -1,6 +1,8 @@
 html/
 build/
 build-linux/
+build-clang/
+build-gcc/
 x64/
 out/
 enc_temp_folder/

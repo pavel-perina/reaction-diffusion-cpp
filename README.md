@@ -6,20 +6,25 @@
 
 * To try ChatGPT (first commit, AVX code)
 * It looks cool :-)
-* Playground for trying some libraries (TaskFlow)
+* Potential playground for trying some libraries (TaskFlow)
 * Playground for trying AVX instuction set
 * Playground for high performance computing / image processing and parallelism
 
+Conversation with ChatGPT (or major parts) are in [chatgpt-reaction-diffusion.md](chatgpt-reaction-diffusion.md) file. It helped a lot with initial code (except some constant were wrong, it used one array for input and output and it took like 2 hours to fix, cause wrong choice of constants was not obvious). Generated simplified AVX code was super useful.
+
+Problem is that ChatGPT gives answers that seem right and belieavable, but sometimes they are oversimplified, made up or just wrong. If you speak with human, you can somehow feel uncertainity about answers or hiding his lack of knowledge or competence in area. ChatGPT just gives wrong answer and writes some extra facts on top of it.
+
 # Links
 
-* https://mrob.com/pub/comp/xmorphia/index.html
-* https://www.karlsims.com/rd.html
+* https://mrob.com/pub/comp/xmorphia/index.html (likely original idea)
+* https://www.karlsims.com/rd.html (explantion)
 * https://github.com/topics/reaction-diffusion
-* https://linusmossberg.github.io/reaction-diffusion/
+* https://jasonwebb.github.io/reaction-diffusion-playground/app.html (one of online simulators, initial constants from here, good to see number of iterations)
 
 # Requirements
 
 ## Knowledge
+
 * CMake basics
 * C++ basics
 
@@ -76,13 +81,13 @@ There are is a problem that AVX/FMA instruction sets are not supported in Virtua
 
 ![speed.png](speed.png)
 
-Performance tested on Ryzen 5900X (12C/24T) with 64MB RAM, usually on 1280x720 data with program compiled by MSVC 2022 Community Edition.
+Performance tested on Ryzen 5900X (12C/24T) with 64MB RAM (2xKingston KF3200C16D4/32GX), usually on 1280x720 data with program compiled by MSVC 2022 Community Edition, gcc 9.4.0 and clang 12.0.0 (on Ubuntu 20.04.5 WSL)
 
 On a single core, AVX code is roughly 5.5 times faster, but both TBB and TaskFlow have some overhead.
 
-Updater2 is slower, but faster in Debug. Uses different pointer arithmetic.
+Updater2 uses different pointer arithmetic, which is faster in debug build (and clang)
 
-Updater3 and Updater4 are fastest, but Updater1 can be fastest, when all CPU cores are used.
+Updater3 and Updater4 are fastest, but when more threads are used, program is likely limited by a memory bandwith.
 
 Data are 32bit float and two images are updated in each iteration. One test batch consists of 2000 iterations. This gives 2000x2x4x1280x720 bytes processed per iteration - each batch processes 14.74GB of data (yes, exacly one million floppy discs!). Doing so in 560ms means data throughput of 26GB/s.
 According to various sources (e.g. https://www.cpu-monkey.com/en/cpu-amd_ryzen_9_5900x) memory bandwidth is 48-56GB/s. Using just two CPU cores and AVX code is almost enough. 4 cores seem optimal. Above that slow algorithms have some benefits, fast ones are getting worse and difference between 3 and 24 threads negligible.
