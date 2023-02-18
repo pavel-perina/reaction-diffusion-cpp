@@ -51,6 +51,7 @@ public:
 };
 
 
+
 //! \brief Frame updater base class
 class UpdaterBase
     : public IUpdater
@@ -66,8 +67,6 @@ public:
     }
 
 protected:
-
-
 
     static constexpr float Du = 0.21f;  //!< \brief Diffusion rate of U
     static constexpr float Dv = 0.105f; //!< \brief Diffusion rate of V
@@ -86,6 +85,7 @@ protected:
 };
 
 
+
 //! \brief Implementation of updater (first version)
 class Updater1
     : public UpdaterBase
@@ -96,7 +96,6 @@ public:
         : UpdaterBase(_u, _v, _uNext, _vNext)
     {
     }
-
 
     void iterate() override
     {
@@ -146,6 +145,7 @@ private:
 };
 
 
+
 //! \brief Implementation of updater (second version)
 class Updater2
     : public UpdaterBase
@@ -175,6 +175,8 @@ private:
         for (int i = range.begin(); i < range.end(); ++i) {
             const float* pU = u.ptr<float>(i);
             const float* pV = v.ptr<float>(i);
+            float* pUnext = uNext.ptr<float>(i);
+            float* pVnext = vNext.ptr<float>(i);
             const size_t rowSize = u.step / sizeof(float);
 
             const ptrdiff_t up   = (i > 0)
@@ -201,12 +203,12 @@ private:
                     lap_v = pV[down] + pV[up] + pV[-1] + pV[+1] - 4.0f * pV[0];
                 }
 
-                const float _u = u.at<float>(i, j);
-                const float _v = v.at<float>(i, j);
+                const float _u = *pU;
+                const float _v = *pV;
                 const float _uNext = _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
                 const float _vNext = _v + (Dv * lap_v + _u * _v * _v - (f + k) * _v);
-                uNext.at<float>(i, j) = _uNext;
-                vNext.at<float>(i, j) = _vNext;
+                pUnext[j] = _uNext;
+                pVnext[j] = _vNext;
                 pU++;
                 pV++;
             }
@@ -214,6 +216,8 @@ private:
     }
 
 };
+
+
 
 #if HAS_AVX
 
@@ -225,6 +229,7 @@ class UpdaterSimdBase
     : public UpdaterBase
 {
 public:
+
     UpdaterSimdBase(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
         : UpdaterBase(_u, _v, _uNext, _vNext)
     {
@@ -304,6 +309,7 @@ protected:
     virtual void processInside() = 0;
 
 };
+
 
 
 //! \brief Updater using AVX/FMA instruction sets available on modern CPUs
@@ -491,6 +497,7 @@ std::pair<double, double> getGainOffset(double minVal, double maxVal)
 }
 
 
+
 //! \brief Save floating point matrix m into image file
 void saveImage(const std::string& filename, const cv::Mat& m)
 {
@@ -503,6 +510,7 @@ void saveImage(const std::string& filename, const cv::Mat& m)
 }
 
 
+//! \brief This function generates animation
 void doAnimation(cv::Mat& u, cv::Mat& v, cv::Mat& uNext, cv::Mat& vNext)
 {
     // This is there only to slow down video at start and accelerate it in the end
@@ -540,6 +548,7 @@ void doAnimation(cv::Mat& u, cv::Mat& v, cv::Mat& uNext, cv::Mat& vNext)
 }
 
 
+//! \brief This function runs benchmarks
 void doBenchmark(cv::Mat& u, cv::Mat& v, cv::Mat& uNext, cv::Mat& vNext)
 {
     constexpr int testIter = 2000; // Iterations per test in each run
@@ -573,7 +582,7 @@ void doBenchmark(cv::Mat& u, cv::Mat& v, cv::Mat& uNext, cv::Mat& vNext)
 }
 
 
-// TODO: divide into fuctions for video export and test (or even two binaries)
+
 int main()
 {
     // Write info about threads and limit number of threads to nThreads or number of CPU threads
@@ -620,7 +629,7 @@ int main()
         }
     }
 
-#if 1
+#if 0
     doAnimation(u, v, uNext, vNext);
 #else
     doBenchmark(u, v, uNext, vNext);
