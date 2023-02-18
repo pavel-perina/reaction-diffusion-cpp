@@ -9,7 +9,6 @@
 
 #include "alignment_allocator.h"
 
-#include <cstddef> // std::ptrdiff_t on FreeBSD
 #include <array>
 #include <chrono>
 #include <iostream>
@@ -40,19 +39,24 @@ constexpr int H = 720;
 
 constexpr int nThreads = 4;
 
+//! \brief Frame updater interface definition
 class IUpdater
 {
 public:
+    //! \brief Destructor
     virtual ~IUpdater() = default;
+
+    //! \brief Do one interation step
     virtual void iterate() = 0;
 };
 
 
-
+//! \brief Frame updater base class
 class UpdaterBase
     : public IUpdater
 {
-protected:
+public:
+    //! \brief Constructor
     UpdaterBase(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
         : u(_u)
         , v(_v)
@@ -61,32 +65,53 @@ protected:
     {
     }
 
-    static constexpr float Du = 0.21f;
-    static constexpr float Dv = 0.105f;
+protected:
+
+
+
+    static constexpr float Du = 0.21f;  //!< \brief Diffusion rate of U
+    static constexpr float Dv = 0.105f; //!< \brief Diffusion rate of V
 #if 0
-    static constexpr float f  = 0.055f; // feed
-    static constexpr float k  = 0.062f; // kill
+    static constexpr float f  = 0.055f; //!< \brief Feed rate
+    static constexpr float k  = 0.062f; //!< \brief Kill rate
 #else
     // http://mrob.com/pub/comp/xmorphia/F100/F100-k470.html
-    static constexpr float f = 0.01f; // feed
-    static constexpr float k = 0.047f; // kill
+    static constexpr float f = 0.01f;   // feed
+    static constexpr float k = 0.047f;  // kill
 #endif
+    //! \brief References to source arrays with concentration of U and V
     cv::Mat& u, & v;
+    //! \brief References to target arrays with concentration of U and V
     cv::Mat& uNext, & vNext;
 };
 
 
-
+//! \brief Implementation of updater (first version)
 class Updater1
     : public UpdaterBase
 {
 public:
+
     Updater1(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
         : UpdaterBase(_u, _v, _uNext, _vNext)
     {
     }
 
-    void operator() (const tbb::blocked_range<int>& range) const
+
+    void iterate() override
+    {
+        // Fragment data into stripes and process them in parallel
+        tbb::parallel_for(tbb::blocked_range<int>(0, H, 10), [&](const tbb::blocked_range<int>& range) {
+            processStripe(range);
+        });
+        // Swap output and input
+        std::swap(u, uNext);
+        std::swap(v, vNext);
+    }
+
+private:
+
+    void processStripe(const tbb::blocked_range<int>& range) const
     {
         for (int i = range.begin(); i < range.end(); ++i) {
             const auto iUp = (i > 0) ? i - 1 : H - 1;
@@ -118,29 +143,34 @@ public:
         }
     }
 
-    void iterate() override
-    {
-        tbb::parallel_for(tbb::blocked_range<int>(0, H, 10), [&](const tbb::blocked_range<int>& range) {
-            this->operator()(range);
-        });
-        std::swap(u, uNext);
-        std::swap(v, vNext);
-    }
-
 };
 
 
-
+//! \brief Implementation of updater (second version)
 class Updater2
     : public UpdaterBase
 {
 public:
+
     Updater2(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
         : UpdaterBase(_u, _v, _uNext, _vNext)
     {
     }
 
-    void operator() (const tbb::blocked_range<int> &range) const
+    void iterate() override
+    {
+        tbb::parallel_for(
+            tbb::blocked_range<int>(0, H, 50),
+            [&](const tbb::blocked_range<int>& range) {
+                processStripe(range);
+            });
+        std::swap(u, uNext);
+        std::swap(v, vNext);
+    }
+
+private:
+
+    void processStripe(const tbb::blocked_range<int> &range) const
     {
         for (int i = range.begin(); i < range.end(); ++i) {
             const float* pU = u.ptr<float>(i);
@@ -183,25 +213,19 @@ public:
         }
     }
 
-    void iterate() override
-    {
-        tbb::parallel_for(
-            tbb::blocked_range<int>(0, H, 50),
-            [&](const tbb::blocked_range<int>& range) {
-                this->operator()(range);
-            });
-        std::swap(u, uNext);
-        std::swap(v, vNext);
-    }
 };
 
 #if HAS_AVX
 
-class UpdaterAvxBase
+//! \brief Base class for updaters using SIMD instruction sets
+//!
+//! Motivation is to share code which deals with edge cases (literally)
+template<int _ByteAlignment>
+class UpdaterSimdBase
     : public UpdaterBase
 {
 public:
-    UpdaterAvxBase(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
+    UpdaterSimdBase(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
         : UpdaterBase(_u, _v, _uNext, _vNext)
     {
     }
@@ -216,6 +240,9 @@ public:
 
 protected:
 
+    //! \brief Process rectangular area defined by corner points
+    //!
+    //! This code wraps around edge and does not assume any memory alignment
     void processArea(int x1, int y1, int x2, int y2)
     {
         for (int i = y1; i < y2; ++i) {
@@ -247,16 +274,19 @@ protected:
         }
     }
 
+    //! \brief Get left stop (from here data are processed using faster code)
     constexpr int leftStop() const
     {
-        return 8; // 8 floats are 32bytes for AVX alignment
+        return _ByteAlignment; // 8 floats are 32bytes for AVX alignment
     }
 
+    //! \brief Get right stop (to here data are processed using faster code)
     constexpr int rightStop() const
     {
-        return (((W - 1) / 8) * 8);
+        return (((W - 1) / _ByteAlignment) * _ByteAlignment);
     }
 
+    //! \brief Process borders of image (first, last row, left and right border)
     void processBorders()
     {
         // can possibly crash on small image
@@ -268,18 +298,22 @@ protected:
         processArea(rightStop(), 1, W, H - 1); // right
     }
 
+    //! \brief Process inside of Image.
+    //!
+    //! This code does not wrap around edges and processes data by 32 (64) bytes long chuncks
     virtual void processInside() = 0;
 
 };
 
 
-
+//! \brief Updater using AVX/FMA instruction sets available on modern CPUs
 class Updater3
-    : public UpdaterAvxBase
+    : public UpdaterSimdBase<8>
 {
 public:
+
     Updater3(cv::Mat & _u, cv::Mat & _v, cv::Mat & _uNext, cv::Mat & _vNext)
-        : UpdaterAvxBase(_u, _v, _uNext, _vNext)
+        : UpdaterSimdBase<8>(_u, _v, _uNext, _vNext)
     {
     }
 
@@ -351,14 +385,14 @@ private:
 
 
 
-
+//! \brief Updater using AVX instruction sets available on modern CPUs and TaskFlow library
 class Updater4
-    : public UpdaterAvxBase
+    : public UpdaterSimdBase<8>
 {
 public:
 
     Updater4(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
-        : UpdaterAvxBase(_u, _v, _uNext, _vNext)
+        : UpdaterSimdBase<8>(_u, _v, _uNext, _vNext)
         , executor(nThreads)
     {
         constexpr int rowsPerTask = 20;
@@ -448,6 +482,7 @@ private:
 #endif // HAS_AVX
 
 
+//! \brief Converts min/max to gain/offset for image normalization
 std::pair<double, double> getGainOffset(double minVal, double maxVal)
 {
     const double gain   = (maxVal > minVal) ? 1.0 / (maxVal - minVal) : 1.0;
@@ -456,7 +491,7 @@ std::pair<double, double> getGainOffset(double minVal, double maxVal)
 }
 
 
-
+//! \brief Save floating point matrix m into image file
 void saveImage(const std::string& filename, const cv::Mat& m)
 {
     double minVal, maxVal;
@@ -468,10 +503,81 @@ void saveImage(const std::string& filename, const cv::Mat& m)
 }
 
 
+void doAnimation(cv::Mat& u, cv::Mat& v, cv::Mat& uNext, cv::Mat& vNext)
+{
+    // This is there only to slow down video at start and accelerate it in the end
+    constexpr int maxIter = (60 * 30 - 1) * 25;
+    std::vector<int> framesToSave;
+    {
+        const int nFramesToSave = 60 * 30 - 1; // 60fps, 8s
+        framesToSave.reserve(nFramesToSave);
+        framesToSave.emplace_back(0);
+        double gamma = /*3.0*/1.0;
+        for (int i = 1; i < nFramesToSave; ++i) {
+            double timeLinePos = (double)i / nFramesToSave;
+            int frame = (int)(pow(timeLinePos, gamma) * maxIter);
+            if (framesToSave.back() != frame) {
+                framesToSave.emplace_back(frame);
+            }
+        }
+    }
+
+#if HAS_AVX
+    Updater3 updater(u, v, uNext, vNext);
+#else
+    Updater1 updater(u, v, uNext, vNext);
+#endif
+    for (int i = 0, j = 0; i < maxIter; i++) {
+        updater.iterate();
+
+        // save video frame
+        if (i == framesToSave[j]) {
+            fmt::print("Frame: {:04}, iteration {:06}\n", j, i);
+            saveImage(fmt::format("frame_{:06}.png", j), u);
+            j++;
+        }
+    }
+}
+
+
+void doBenchmark(cv::Mat& u, cv::Mat& v, cv::Mat& uNext, cv::Mat& vNext)
+{
+    constexpr int testIter = 2000; // Iterations per test in each run
+    constexpr int testRuns = 5;    // Number of test runs
+    constexpr double testBlockSize = ((size_t)H * W * 2 * sizeof(float) * testIter) / (1024.0*1024.0*1024.0);
+    fmt::print("Tests are cycling after {} iteration processing array of {}x{} pixels\n", testIter, W, H);
+
+    std::vector<std::tuple<std::shared_ptr<IUpdater>, std::string>> testProcedures {
+        { std::make_shared<Updater1>(u, v, uNext, vNext), "Updater1: trivial" },
+        { std::make_shared<Updater2>(u, v, uNext, vNext), "Updater2: no mat.at<float>(x,y)" },
+#if HAS_AVX
+        { std::make_shared<Updater3>(u, v, uNext, vNext), "Updater: AVX/TBB" },
+        { std::make_shared<Updater4>(u, v, uNext, vNext), "Updater: AVX/TaskFlow" },
+#endif
+    };
+
+    for (int testRun = 0; testRun < testRuns; ++testRun) {
+        for (auto& test : testProcedures) {
+            using Clock = std::chrono::system_clock;
+            using DurationMs = std::chrono::duration<double, std::milli>;
+
+            const Clock::time_point stopWatchStart = Clock::now();
+            for (int i = 0; i < testIter; i++) {
+                std::get<0>(test)->iterate();
+            }
+            const DurationMs durationMs(Clock::now() - stopWatchStart);
+            const double gbps = testBlockSize / (durationMs.count() / 1000.0);
+            fmt::print("Duration: {:>9.1}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, std::get<1>(test));
+        }
+    }
+}
+
+
 // TODO: divide into fuctions for video export and test (or even two binaries)
 int main()
 {
-    //int numThreads = tbb::info::default_concurrency();
+    // Write info about threads and limit number of threads to nThreads or number of CPU threads
+    // available, whatever is smaller
     int numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
     fmt::print("Machine has {} threads.\n", numThreads);
     numThreads = std::min(nThreads, numThreads);
@@ -479,7 +585,8 @@ int main()
     tbb::global_control tbbGlob(tbb::global_control::max_allowed_parallelism, numThreads);
 
     cv::Mat u, v, uNext, vNext;
-    // would be nice to use aligned alocator for unique_ptr<float[]>
+    // would be nice to use aligned alocator for unique_ptr<float[]>, but whatever ...
+    // just use std::vector as a storage
     std::array<std::vector<float, AlignmentAllocator<float, 4096>>, 4> memoryBlocks;
     {
         constexpr size_t padTo = 64;
@@ -495,7 +602,7 @@ int main()
         u.setTo(1.0f);
     }
 
-    // Initialize image with rectange (random numbers do not work)
+    // Initialize U,V arrays with rectange in the middle (random numbers do not work)
     fmt::print("Initializing arrays\n");
     {
         auto seed = std::random_device{}();
@@ -513,89 +620,9 @@ int main()
         }
     }
 
-    // This is there only to slow down video at start and accelerate it in the end
-    constexpr int maxIter = (60*30-1)*25;
-    std::vector<int> framesToSave;
-    {
-        const int nFramesToSave = 60 * 30 - 1; // 60fps, 8s
-        framesToSave.reserve(nFramesToSave);
-        framesToSave.emplace_back(0);
-        double gamma = /*3.0*/1.0;
-        for (int i = 1; i < nFramesToSave; ++i) {
-            double timeLinePos = (double)i / nFramesToSave;
-            int frame = (int)(pow(timeLinePos, gamma) * maxIter);
-            if (framesToSave.back() != frame) {
-                framesToSave.emplace_back(frame);
-            }
-        }
-    }
-
-#if 0
-    int j = 0;
-#if HAS_AVX
-    Updater3 updater(u, v, uNext, vNext);
+#if 1
+    doAnimation(u, v, uNext, vNext);
 #else
-    Updater1 updater(u, v, uNext, vNext);
-#endif
-    for (int i = 0; i < maxIter; i++) {
-        updater.iterate();
-
-        // save video frame
-        if (i == framesToSave[j]) {
-            fmt::print("Frame: {:04}, iteration {:06}\n", j, i);
-            saveImage(fmt::format("frame_{:06}.png", j), u);
-            j++;
-        }
-    }
-#else
-    int testIter = 2000;
-    const double testBlockSize = ((size_t)H * W * 2 * sizeof(float) * testIter) / (1024.0*1024.0*1024.0);
-    fmt::print("Tests are cycling after {} iteration processing array of {}x{} pixels\n", testIter, W, H);
-    // TODO: add functions for logical parts
-    using Clock = std::chrono::system_clock;
-    using DurationMs = std::chrono::duration<double, std::milli>;
-
-    Updater1 updater1(u, v, uNext, vNext);
-    Updater2 updater2(u, v, uNext, vNext);
-#if HAS_AVX
-    Updater3 updater3(u, v, uNext, vNext);
-    Updater4 updater4(u, v, uNext, vNext);
-#endif
-    for (int j = 0; j < 5; ++j) {
-        double gbps;
-        Clock::time_point stopWatchStart = Clock::now();
-        for (int i = 0; i < testIter; i++) {
-            updater1.iterate();
-        }
-        DurationMs durationMs(Clock::now() - stopWatchStart);
-        gbps = testBlockSize / (durationMs.count()/1000.0);
-        fmt::print("Duration: {:>9.1}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater1: trivial");
-        //
-        stopWatchStart = Clock::now();
-        for (int i = 0; i < testIter; i++) {
-            updater2.iterate();
-        }
-        durationMs = Clock::now() - stopWatchStart;
-        gbps = testBlockSize / (durationMs.count()/1000.0);
-        fmt::print("Duration: {:>9.1}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater2: no mat.at<float>(x,y)");
-#if HAS_AVX
-        //
-        stopWatchStart = Clock::now();
-        for (int i = 0; i < testIter; i++) {
-            updater3.iterate();
-        }
-        durationMs = Clock::now() - stopWatchStart;
-        gbps = testBlockSize / (durationMs.count()/1000.0);
-        fmt::print("Duration: {:>9.1}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater3: AVX/TBB");
-
-        stopWatchStart = Clock::now();
-        for (int i = 0; i < testIter; i++) {
-            updater4.iterate();
-        }
-        durationMs = Clock::now() - stopWatchStart;
-        gbps = testBlockSize / (durationMs.count()/1000.0);
-        fmt::print("Duration: {:>9.1}, Throuput: {:>5.1f} GiB/s, {}\n", durationMs, gbps, "Updater4: AVX/TaskFlow");
-#endif
-    }
+    doBenchmark(u, v, uNext, vNext);
 #endif
 }
