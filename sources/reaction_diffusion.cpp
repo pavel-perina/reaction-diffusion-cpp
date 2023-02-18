@@ -560,8 +560,8 @@ void doBenchmark(cv::Mat& u, cv::Mat& v, cv::Mat& uNext, cv::Mat& vNext)
         { std::make_shared<Updater1>(u, v, uNext, vNext), "Updater1: trivial" },
         { std::make_shared<Updater2>(u, v, uNext, vNext), "Updater2: no mat.at<float>(x,y)" },
 #if HAS_AVX
-        { std::make_shared<Updater3>(u, v, uNext, vNext), "Updater: AVX/TBB" },
-        { std::make_shared<Updater4>(u, v, uNext, vNext), "Updater: AVX/TaskFlow" },
+        { std::make_shared<Updater3>(u, v, uNext, vNext), "Updater3: AVX/TBB" },
+        { std::make_shared<Updater4>(u, v, uNext, vNext), "Updater4: AVX/TaskFlow" },
 #endif
     };
 
