@@ -76,6 +76,7 @@ protected:
 };
 
 
+
 class Updater1
     : public UpdaterBase
 {
@@ -195,20 +196,30 @@ public:
 };
 
 #if HAS_AVX
-// TODO: make base class (UpdateBaseAvx) and lambda for a loop (with iRange as pair), code is getting long
-class Updater3
+
+class UpdaterAvxBase
     : public UpdaterBase
 {
 public:
-    Updater3(cv::Mat & _u, cv::Mat & _v, cv::Mat & _uNext, cv::Mat & _vNext)
+    UpdaterAvxBase(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
         : UpdaterBase(_u, _v, _uNext, _vNext)
     {
     }
 
+    void iterate() override
+    {
+        processBorders();
+        processInside();
+        std::swap(u, uNext);
+        std::swap(v, vNext);
+    }
+
+protected:
+
     void processArea(int x1, int y1, int x2, int y2)
     {
         for (int i = y1; i < y2; ++i) {
-            const auto iUp   = (i > 0) ? i - 1 : H - 1;
+            const auto iUp = (i > 0) ? i - 1 : H - 1;
             const auto iDown = (i + 1) % H;
             for (int j = x1; j < x2; ++j) {
                 // TODO: replace with [0.05 0.2 0.05   0.2 -1 0.2   0.05 0.2 0.05 kernel
@@ -243,24 +254,41 @@ public:
 
     constexpr int rightStop() const
     {
-        return ((W - 1) / 8) * 8;
+        return (((W - 1) / 8) * 8);
     }
 
     void processBorders()
     {
-        // FIXME: can possibly crash on small image
-        static_assert(W > 8, "Image to small");
-        processArea(0,     0, W, 1);     // top
-        processArea(0, H - 1, W, H);     // bottom
-        processArea(0,     1, leftStop(), H - 1); // left
+        // can possibly crash on small image
+        static_assert(W > 32, "Image to small");
+        static_assert(H > 32, "Image to small");
+        processArea(0, 0, W, 1);               // top
+        processArea(0, H - 1, W, H);           // bottom
+        processArea(0, 1, leftStop(), H - 1);  // left
         processArea(rightStop(), 1, W, H - 1); // right
-
     }
+
+    virtual void processInside() = 0;
+
+};
+
+
+
+class Updater3
+    : public UpdaterAvxBase
+{
+public:
+    Updater3(cv::Mat & _u, cv::Mat & _v, cv::Mat & _uNext, cv::Mat & _vNext)
+        : UpdaterAvxBase(_u, _v, _uNext, _vNext)
+    {
+    }
+
+private:
 
     void processInside()
     {
         constexpr int grainSize = 20;
-        tbb::parallel_for(tbb::blocked_range<int>(0, H, grainSize), [&](tbb::blocked_range<int>& range) {
+        tbb::parallel_for(tbb::blocked_range<int>(0, H, grainSize), [&](const tbb::blocked_range<int>& range) {
             const int jMin = leftStop();
             const int jMax = rightStop();
             const __m256 f_      = _mm256_set1_ps(f);
@@ -318,14 +346,6 @@ public:
         );
     }
 
-    void iterate() override
-    {
-        processBorders();
-        processInside();
-        std::swap(u, uNext);
-        std::swap(v, vNext);
-    }
-
     tbb::auto_partitioner partitioner;
 };
 
@@ -333,11 +353,12 @@ public:
 
 
 class Updater4
-    : public UpdaterBase
+    : public UpdaterAvxBase
 {
 public:
+
     Updater4(cv::Mat& _u, cv::Mat& _v, cv::Mat& _uNext, cv::Mat& _vNext)
-        : UpdaterBase(_u, _v, _uNext, _vNext)
+        : UpdaterAvxBase(_u, _v, _uNext, _vNext)
         , executor(nThreads)
     {
         constexpr int rowsPerTask = 20;
@@ -351,62 +372,10 @@ public:
         } while (true);
     }
 
-    void processArea(int x1, int y1, int x2, int y2)
-    {
-        for (int i = y1; i < y2; ++i) {
-            const auto iUp = (i > 0) ? i - 1 : H - 1;
-            const auto iDown = (i + 1) % H;
-            for (int j = x1; j < x2; ++j) {
-                // TODO: replace with [0.05 0.2 0.05   0.2 -1 0.2   0.05 0.2 0.05 kernel
-                float lap_u, lap_v;
-                if (j == 0) { // unlikely
-                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, W - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
-                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, W - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
-                }
-                else if (j == W - 1) { // unlikely
-                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, 0) - 4.0f * u.at<float>(i, j);
-                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, 0) - 4.0f * v.at<float>(i, j);
-
-                }
-                else { // likely
-                    lap_u = u.at<float>(iUp, j) + u.at<float>(iDown, j) + u.at<float>(i, j - 1) + u.at<float>(i, j + 1) - 4.0f * u.at<float>(i, j);
-                    lap_v = v.at<float>(iUp, j) + v.at<float>(iDown, j) + v.at<float>(i, j - 1) + v.at<float>(i, j + 1) - 4.0f * v.at<float>(i, j);
-                }
-                const float _u = u.at<float>(i, j);
-                const float _v = v.at<float>(i, j);
-                const float _uNext = _u + (Du * lap_u - _u * _v * _v + f * (1.0f - _u));
-                const float _vNext = _v + (Dv * lap_v + _u * _v * _v - (f + k) * _v);
-                uNext.at<float>(i, j) = _uNext;
-                vNext.at<float>(i, j) = _vNext;
-            }
-        }
-    }
-
-    constexpr int leftStop() const
-    {
-        return 8; // 8 floats are 32bytes for AVX alignment
-    }
-
-    int rightStop()
-    {
-        return ((W - 1) / 8) * 8;
-    }
-
-    void processBorders()
-    {
-        // FIXME: can possibly crash on small image
-        static_assert(W > 8, "Image to small");
-        processArea(0, 0, W, 1);     // top
-        processArea(0, H - 1, W, H);     // bottom
-        processArea(0, 1, leftStop(), H - 1); // left
-        processArea(rightStop(), 1, W, H - 1); // right
-
-    }
+private:
 
     void processInside()
     {
-        //tbb::parallel_for(tbb::blocked_range<int>(0, H), [&](tbb::blocked_range<int>& range) {
-        //taskflow.for_each(ranges.begin(), ranges.end(), [&](std::pair<int,int>& range) {
         taskflow.for_each(ranges.begin(), ranges.end(), [&](const std::pair<int,int>& range) {
             const int jMin = leftStop();
             const int jMax = rightStop();
@@ -469,14 +438,6 @@ public:
         });
         executor.run(taskflow).wait();
         taskflow.clear();
-    }
-
-    void iterate() override
-    {
-        processBorders();
-        processInside();
-        std::swap(u, uNext);
-        std::swap(v, vNext);
     }
 
     std::vector<std::pair<int, int>> ranges;
