@@ -89,7 +89,7 @@ Updater2 uses different pointer arithmetic, which is faster in debug build (and 
 
 Updater3 and Updater4 are fastest, but when more threads are used, program is likely limited by a memory bandwith.
 
-Data are 32bit float and two images are updated in each iteration. One test batch consists of 2000 iterations. This gives 2000x2x4x1280x720 bytes processed per iteration - each batch processes 14.74GB of data (yes, exacly one million floppy discs!). Doing so in 560ms means data throughput of 26GB/s.
+Data are 32bit float and two images are updated in each iteration. One test batch consists of 2000 iterations. This gives 2000x2x4x1280x720 bytes processed per iteration - each batch processes 14.74GB of data (ten thousand floppy discs). Doing so in 560ms means data throughput of 26GB/s.
 According to various sources (e.g. https://www.cpu-monkey.com/en/cpu-amd_ryzen_9_5900x) memory bandwidth is 48-56GB/s. Using just two CPU cores and AVX code is almost enough. 4 cores seem optimal. Above that slow algorithms have some benefits, fast ones are getting worse and difference between 3 and 24 threads negligible.
 
 (Not so) surprisingly, GCC code is fastest, Clang is 2nd, Microsoft C++ compiler is the worst.
